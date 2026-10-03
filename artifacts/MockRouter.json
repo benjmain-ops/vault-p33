@@ -1,0 +1,92 @@
+{
+  "abi": [
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "tokenIn",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "tokenOut",
+              "type": "address"
+            },
+            {
+              "internalType": "int24",
+              "name": "tickSpacing",
+              "type": "int24"
+            },
+            {
+              "internalType": "address",
+              "name": "recipient",
+              "type": "address"
+            },
+            {
+              "internalType": "uint256",
+              "name": "deadline",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "amountIn",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "amountOutMinimum",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint160",
+              "name": "sqrtPriceLimitX96",
+              "type": "uint160"
+            }
+          ],
+          "internalType": "struct MockRouter.ExactInputSingleParams",
+          "name": "p",
+          "type": "tuple"
+        }
+      ],
+      "name": "exactInputSingle",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "out",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "payable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "rate",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "r",
+          "type": "uint256"
+        }
+      ],
+      "name": "setRate",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x6080604052663c6568f12e80005f553480156018575f80fd5b50610364806100265f395ff3fe608060405260043610610033575f3560e01c80632c4e722e1461003757806334fcf4371461005d578063a026383e1461007d575b5f80fd5b348015610042575f80fd5b5061004b5f5481565b60405190815260200160405180910390f35b348015610068575f80fd5b5061007b610077366004610269565b5f55565b005b61004b61008b366004610280565b5f81608001354211156100d05760405162461bcd60e51b8152602060048201526008602482015267646561646c696e6560c01b60448201526064015b60405180910390fd5b670de0b6b3a76400005f548360a001356100ea919061029a565b6100f491906102c3565b90508160c001358110156101405760405162461bcd60e51b8152602060048201526013602482015272151bdbc81b1a5d1d1b19481c9958d95a5d9959606a1b60448201526064016100c7565b61014d60208301836102e2565b6040516323b872dd60e01b815233600482015230602482015260a084013560448201526001600160a01b0391909116906323b872dd906064016020604051808303815f875af11580156101a2573d5f803e3d5ffd5b505050506040513d601f19601f820116820180604052508101906101c6919061030f565b506101d760408301602084016102e2565b6001600160a01b031663a9059cbb6101f560808501606086016102e2565b6040516001600160e01b031960e084901b1681526001600160a01b039091166004820152602481018490526044016020604051808303815f875af115801561023f573d5f803e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610263919061030f565b50919050565b5f60208284031215610279575f80fd5b5035919050565b5f610100828403128015610292575f80fd5b509092915050565b80820281158282048414176102bd57634e487b7160e01b5f52601160045260245ffd5b92915050565b5f826102dd57634e487b7160e01b5f52601260045260245ffd5b500490565b5f602082840312156102f2575f80fd5b81356001600160a01b0381168114610308575f80fd5b9392505050565b5f6020828403121561031f575f80fd5b81518015158114610308575f80fdfea2646970667358221220f35fc576a5598936152705b8d01dee696166a3ba79cbdd4fb93d54aeedc5cc3964736f6c634300081a0033"
+}

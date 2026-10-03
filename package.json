@@ -1,0 +1,25 @@
+{
+  "name": "p33-lottery-vault",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vault mono-utilisateur : le rendement p33 achète des tickets de la loterie BCM (Avalanche)",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "test": "node scripts/build.js && node --test --test-reporter=spec test/vault.test.js",
+    "test:web": "node scripts/build.js && node test/e2e.js",
+    "deploy": "node scripts/build.js && node scripts/deploy.js",
+    "keeper": "node keeper/index.js"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "5.0.2",
+    "@openzeppelin/merkle-tree": "^1.0.7",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "ganache": "7.9.2",
+    "playwright-core": "^1.56.0",
+    "solc": "0.8.26"
+  }
+}
