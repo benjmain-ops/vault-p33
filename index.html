@@ -1,0 +1,611 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vault p33 Loterie</title>
+<meta name="description" content="Ton rendement p33 achète des tickets de loterie BCM. Ton principal reste à toi.">
+<meta name="theme-color" content="#0f1115">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #f6f5f1; --card: #ffffff; --ink: #16181d; --muted: #6a6f7a; --line: #e4e2db;
+    --accent: #9a6a00; --accent-ink: #ffffff; --good: #1f7a4d; --bad: #b3261e; --field: #faf9f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --card: #181b22; --ink: #eceae4; --muted: #9499a5; --line: #2a2e38;
+      --accent: #e8b84a; --accent-ink: #16181d; --good: #5fcf96; --bad: #ff8a80; --field: #12151b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 0 16px calc(32px + env(safe-area-inset-bottom));
+  }
+  main { max-width: 560px; margin: 0 auto; }
+  header { padding: 28px 0 8px; }
+  h1 { font-size: 1.5rem; line-height: 1.2; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h2 { font-size: 1rem; margin: 0 0 12px; }
+  p { margin: 0 0 12px; }
+  .lede { color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-top: 14px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+  .row:last-of-type { border-bottom: 0; }
+  .row span:first-child { color: var(--muted); }
+  .row span:last-child { font-variant-numeric: tabular-nums; text-align: right; overflow-wrap: anywhere; }
+  .big { font-size: 1.6rem; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  .unit { font-size: 0.85rem; color: var(--muted); font-weight: 400; margin-left: 4px; }
+  .muted { color: var(--muted); font-size: 0.875rem; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; overflow-wrap: anywhere; }
+  label { display: block; font-size: 0.875rem; color: var(--muted); margin: 12px 0 4px; }
+  input[type=text], input[type=number] {
+    width: 100%; padding: 12px; font: inherit; color: var(--ink); background: var(--field);
+    border: 1px solid var(--line); border-radius: 10px; min-height: 46px;
+  }
+  input:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .field { display: flex; gap: 8px; }
+  .field input { flex: 1; min-width: 0; }
+  button {
+    font: inherit; font-weight: 600; min-height: 46px; padding: 10px 16px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .actions button { flex: 1 1 160px; }
+  .check { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; color: var(--ink); font-size: 0.95rem; }
+  .check input { width: 20px; height: 20px; margin-top: 2px; flex: none; accent-color: var(--accent); }
+  details { margin-top: 14px; }
+  summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
+  #status {
+    position: sticky; bottom: calc(12px + env(safe-area-inset-bottom)); margin-top: 16px; padding: 12px 14px;
+    border-radius: 10px; border: 1px solid var(--line); background: var(--card); font-size: 0.95rem;
+  }
+  #status[data-kind=ok] { border-color: var(--good); color: var(--good); }
+  #status[data-kind=err] { border-color: var(--bad); color: var(--bad); }
+  #status:empty { display: none; }
+  .warn { border-left: 3px solid var(--accent); padding-left: 12px; }
+  footer { margin-top: 28px; color: var(--muted); font-size: 0.8rem; }
+  a { color: var(--accent); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Vault p33 Loterie</h1>
+    <p class="lede">Ton p33 reste à toi. Seul son rendement hebdomadaire est converti en tickets de la loterie BCM.</p>
+  </header>
+
+  <!-- 1. Connexion -->
+  <section class="card" id="connectCard">
+    <h2>Connecter un wallet</h2>
+    <p class="muted" id="connectHint">Réseau requis : Avalanche C-Chain. Sur mobile, ouvre cette page depuis le navigateur intégré de ton wallet.</p>
+    <div class="actions" id="walletList"></div>
+  </section>
+
+  <!-- 1 bis. Première installation -->
+  <section class="card" id="setupCard" hidden>
+    <h2>Première installation</h2>
+    <p>Aucune factory n'est configurée. Tu peux la déployer maintenant depuis ton wallet : une seule transaction, à faire une seule fois. Elle servira ensuite à créer ton vault et ceux des personnes à qui tu donnes le lien.</p>
+    <label for="iTick">Tick spacing du pool p33/WAVAX sur Pharaoh</label>
+    <input id="iTick" type="text" inputmode="numeric">
+    <p class="muted" id="iTickHint">Recherche du pool…</p>
+    <label for="iKeeper">Adresse d'un robot (facultatif)</label>
+    <input id="iKeeper" type="text" spellcheck="false" autocomplete="off" placeholder="0x… ou vide">
+    <p class="muted">Laisse vide pour tout piloter depuis cette page. Un robot peut être ajouté plus tard, vault par vault.</p>
+    <div class="actions"><button class="primary" id="installBtn">Déployer la factory</button></div>
+  </section>
+
+  <!-- 2. Création -->
+  <section class="card" id="createCard" hidden>
+    <h2>Créer mon vault</h2>
+    <p>Un contrat à ton nom est déployé. Tu es le seul à pouvoir y déposer et en retirer ; le robot qui achète les tickets n'a aucun droit de retrait.</p>
+    <label for="cFloor">Prix plancher de vente du rendement (WAVAX par p33)</label>
+    <input id="cFloor" type="text" inputmode="decimal" placeholder="ex. 0.013">
+    <p class="muted">En dessous de ce prix, le vault refuse de vendre. Prends le cours actuel du p33 en AVAX sur Pharaoh et retire 20 à 30 %.</p>
+    <label for="cMaxPrice">Prix maximum accepté pour un ticket (WAVAX)</label>
+    <input id="cMaxPrice" type="text" inputmode="decimal">
+    <p class="muted" id="cPriceHint"></p>
+    <label class="check"><input id="cReinvest" type="checkbox"> <span>Rejouer automatiquement les gains en tickets. Décoché : les gains restent de côté, à retirer quand tu veux.</span></label>
+    <div class="actions"><button class="primary" id="createBtn">Créer mon vault</button></div>
+  </section>
+
+  <!-- 3. Tableau de bord -->
+  <div id="dash" hidden>
+    <section class="card">
+      <h2>Mon dépôt</h2>
+      <div class="big"><span id="vP33">–</span><span class="unit">p33 dans le vault</span></div>
+      <div class="row"><span>Principal protégé</span><span><span id="vPrincipal">–</span> xPHAR</span></div>
+      <div class="row"><span>Rendement vendable</span><span><span id="vHarvestable">–</span> p33</span></div>
+      <div class="row"><span>Dans mon wallet</span><span><span id="wP33">–</span> p33</span></div>
+      <label for="amtP33">Montant en p33</label>
+      <div class="field"><input id="amtP33" type="text" inputmode="decimal" placeholder="0.0"><button id="maxP33" type="button">Max</button></div>
+      <div class="actions">
+        <button class="primary" id="depositBtn">Déposer</button>
+        <button id="withdrawBtn">Retirer</button>
+        <button id="withdrawAllBtn">Tout retirer</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Tickets</h2>
+      <div class="big"><span id="vBudget">–</span><span class="unit">WAVAX de budget</span></div>
+      <div class="row"><span>Tickets achetables</span><span id="vAffordable">–</span></div>
+      <div class="row"><span>Prix du ticket</span><span><span id="lPrice">–</span> WAVAX</span></div>
+      <div class="row"><span>Prochain tirage</span><span id="lDraw">–</span></div>
+      <div class="row"><span>Tickets achetés au total</span><span id="vTickets">–</span></div>
+      <div class="actions">
+        <button id="cycleBtn">Lancer le cycle maintenant</button>
+      </div>
+      <p class="muted" style="margin-top:12px">Une seule transaction : encaisse les gains en attente, vend le rendement, achète les tickets. Le robot le fait tout seul ; le bouton sert si tu veux le déclencher toi-même.</p>
+    </section>
+
+    <section class="card">
+      <h2>Gains</h2>
+      <div class="big"><span id="vWinnings">–</span><span class="unit">WAVAX disponibles</span></div>
+      <div class="row"><span>En attente à la loterie</span><span><span id="lClaimable">–</span> WAVAX</span></div>
+      <p class="warn muted" id="claimNote" hidden></p>
+      <div class="actions">
+        <button id="collectBtn">Encaisser</button>
+        <button class="primary" id="withdrawWavaxBtn">Retirer vers mon wallet</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Mon vault</h2>
+      <p class="mono" id="vAddr"></p>
+      <p><a id="vLink" target="_blank" rel="noopener">Voir le contrat sur l'explorateur</a></p>
+      <label for="shareLink">Lien à partager pour que d'autres créent leur propre vault</label>
+      <div class="field"><input id="shareLink" type="text" readonly><button id="copyLink" type="button">Copier</button></div>
+      <p class="warn muted" id="notOwner" hidden>Ce wallet n'est pas le propriétaire de ce vault : lecture seule.</p>
+      <details>
+        <summary>Réglages</summary>
+        <label for="sFloor">Prix plancher de vente (WAVAX par p33)</label>
+        <input id="sFloor" type="text" inputmode="decimal">
+        <label for="sMaxPrice">Prix maximum d'un ticket (WAVAX)</label>
+        <input id="sMaxPrice" type="text" inputmode="decimal">
+        <div class="actions"><button id="guardsBtn">Enregistrer les garde-fous</button></div>
+        <label class="check"><input id="sReinvest" type="checkbox"> <span>Rejouer automatiquement les gains en tickets</span></label>
+        <label for="sKeeper">Adresse du robot (keeper)</label>
+        <input id="sKeeper" type="text" spellcheck="false" autocomplete="off">
+        <div class="actions"><button id="keeperBtn">Changer de robot</button></div>
+        <p class="muted" style="margin-top:12px">Le robot peut seulement vendre le rendement, acheter des tickets et réclamer les gains. Mets l'adresse 0x000…000 pour le désactiver.</p>
+      </details>
+    </section>
+  </div>
+
+  <div id="status" role="status" aria-live="polite"></div>
+
+  <footer>
+    <p>Jeu d'argent : en moyenne, le rendement joué est perdu. Ton principal reste exposé au cours du p33. Contrats non audités, à utiliser avec des montants que tu peux te permettre de perdre.</p>
+    <p class="mono" id="factoryInfo"></p>
+  </footer>
+</main>
+
+<script src="config.js"></script>
+<script src="ethers.umd.min.js"></script>
+<script src="factory.js"></script>
+<script src="vaultlib.js"></script>
+<script>
+(() => {
+  "use strict";
+  const CFG = Object.assign({}, window.VAULT_CONFIG);
+  const qs = new URLSearchParams(location.search);
+  const store = {
+    get(k) { try { return localStorage.getItem("p33vault." + k); } catch (_) { return null; } },
+    set(k, v) { try { localStorage.setItem("p33vault." + k, v); } catch (_) {} },
+  };
+  // priorité : lien partagé, puis config.js, puis factory déployée depuis ce navigateur
+  CFG.factory = qs.get("factory") || CFG.factory || store.get("factory") || "";
+  const $ = (id) => document.getElementById(id);
+  const E = ethers;
+
+  const FACTORY_ABI = [
+    "function p33() view returns (address)", "function wavax() view returns (address)",
+    "function lottery() view returns (address)", "function defaultKeeper() view returns (address)",
+    "function vaultsOf(address) view returns (address[])",
+    "function createVault(uint256 minWavaxPerP33, uint256 maxTicketPrice, bool reinvestWinnings) returns (address)",
+    "event VaultCreated(address indexed owner, address vault)",
+  ];
+  const VAULT_ABI = [
+    "function owner() view returns (address)", "function keeper() view returns (address)",
+    "function principalAssets() view returns (uint256)", "function ticketBudget() view returns (uint256)",
+    "function minWavaxPerP33() view returns (uint256)", "function maxTicketPrice() view returns (uint256)",
+    "function reinvestWinnings() view returns (bool)", "function harvestable() view returns (uint256)",
+    "function winnings() view returns (uint256)",
+    "function deposit(uint256 shares)", "function withdraw(uint256 shares, address to)",
+    "function withdrawAll(address to)", "function withdrawWavax(uint256 amount, address to)",
+    "function setKeeper(address)", "function setGuards(uint256, uint256)", "function setReinvestWinnings(bool)",
+    "function harvest(uint256 amountIn, uint256 minOut) returns (uint256)",
+    "function collectWinnings()",
+    "function cycle(uint256 harvestAmount, uint256 minOut, uint256 maxTickets, uint256[] ticketIds, uint8[] ranks, uint256[] amounts, bytes32[][] proofs) returns (uint256, uint256, uint256)",
+    "error NotOperator()", "error ZeroAddress()", "error ZeroAmount()", "error FloorNotSet()", "error NothingToBuy()",
+    "error ExceedsHarvestable(uint256 requested, uint256 available)", "error Slippage(uint256 received, uint256 minimum)",
+    "error TicketPriceTooHigh(uint256 price, uint256 maxPrice)", "error OwnableUnauthorizedAccount(address account)",
+  ];
+  const ERC20_ABI = [
+    "function balanceOf(address) view returns (uint256)", "function allowance(address,address) view returns (uint256)",
+    "function approve(address,uint256) returns (bool)",
+  ];
+  const LOTTERY_ABI = [
+    "function ticketPrice() view returns (uint256)", "function currentDrawId() view returns (uint256)",
+    "function claimable(address) view returns (uint256)", "function getOwnerTickets(address) view returns (uint256[])",
+    "function rootPoseA(uint256) view returns (uint256)", "function ticketPrizeClaimed(uint256) view returns (bool)",
+    "function getDrawTickets(uint256) view returns (uint256[])",
+    "function getTicket(uint256) view returns (tuple(uint256 id,uint256 drawId,address owner,uint8[9] mainNumbers,uint8[3] compNumbers,bool isSystemPlay,uint8 systemMainCount,uint8 systemCompCount,uint8 rank,bool claimed,uint256 grossWinAmount))",
+    "function getDraw(uint256) view returns (tuple(uint256 id,uint256 scheduledTime,uint256 drawnAt,uint8[7] winningMain,uint8[2] winningComp,uint256 prizePool,uint256[12] rankPools,uint256 drawVolume,bool isRun2,bool finalized,bool hasRank1Winner,bytes32 merkleRoot))",
+  ];
+  const ERRORS_FR = {
+    NotOperator: "Ce wallet n'a pas le droit de faire cette opération.",
+    ZeroAmount: "Le montant est nul.",
+    FloorNotSet: "Le prix plancher n'est pas réglé (Réglages).",
+    NothingToBuy: "Le budget ne couvre pas un ticket.",
+    ExceedsHarvestable: "Montant supérieur au rendement vendable.",
+    Slippage: "Prix obtenu inférieur au minimum : vente annulée.",
+    TicketPriceTooHigh: "Le ticket coûte plus que ton prix maximum (Réglages).",
+    OwnableUnauthorizedAccount: "Seul le propriétaire du vault peut faire ça.",
+  };
+
+  const VAULT_IFACE = new E.Interface(VAULT_ABI);
+  let eip1193, provider, signer, account, factory, vault, p33, wavax, lottery, snap = {};
+
+  // ── affichage ──
+  function fmt(x, digits = 4) {
+    const s = E.formatEther(x);
+    const [i, f = ""] = s.split(".");
+    const frac = f.slice(0, digits).replace(/0+$/, "");
+    return Number(i).toLocaleString("fr-FR") + (frac ? "," + frac : "");
+  }
+  function parseAmount(str) {
+    const clean = String(str).trim().replace(/\s/g, "").replace(",", ".");
+    if (!/^\d*\.?\d+$/.test(clean)) throw new Error("Montant invalide.");
+    return E.parseEther(clean);
+  }
+  function status(msg, kind = "") { const el = $("status"); el.textContent = msg; el.dataset.kind = kind; }
+  function explain(e) {
+    if (e && e.code === "ACTION_REJECTED") return "Transaction refusée dans le wallet.";
+    // ethers ne décode les erreurs du contrat que sur les appels en lecture : pour un envoi,
+    // on décode nous-mêmes les données de revert.
+    let name = e && e.revert && e.revert.name;
+    const data = e && (typeof e.data === "string" ? e.data : e.info && e.info.error && e.info.error.data);
+    if (!name && typeof data === "string" && data.length >= 10) {
+      try { name = VAULT_IFACE.parseError(data)?.name; } catch (_) {}
+    }
+    if (name && ERRORS_FR[name]) return ERRORS_FR[name];
+    const raw = (e && (e.shortMessage || e.reason || e.message)) || String(e);
+    if (/Too little received/i.test(raw)) return "Le cours du p33 est sous ton prix plancher : vente refusée.";
+    if (/E27|E06/.test(raw)) return "Le tirage en cours est clos. Réessaie quand le suivant est ouvert.";
+    if (/EnforcedPause/.test(raw)) return "La loterie est en pause.";
+    return raw.length > 220 ? raw.slice(0, 220) + "…" : raw;
+  }
+  let busy = false;
+  async function run(label, fn) {
+    if (busy) return;
+    busy = true;
+    document.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    try {
+      status(label + " : confirme dans ton wallet…");
+      const tx = await fn();
+      if (tx && tx.wait) { status(label + " : en attente de confirmation…"); await tx.wait(); }
+      await refresh().catch(console.error); // les chiffres sont à jour avant d'annoncer « fait »
+      status(label + " : fait.", "ok");
+    } catch (e) {
+      console.error(e);
+      await refresh().catch(console.error);
+      status(label + " : " + explain(e), "err");
+    } finally {
+      busy = false;
+      document.querySelectorAll("button").forEach((b) => (b.disabled = false));
+    }
+  }
+
+  // ── wallets ──
+  const found = new Map();
+  function renderWallets() {
+    const box = $("walletList");
+    box.textContent = "";
+    const add = (name, getProvider, primary) => {
+      const b = document.createElement("button");
+      b.textContent = name;
+      if (primary) b.className = "primary";
+      b.onclick = async () => {
+        try { status("Connexion…"); await connect(await getProvider()); }
+        catch (e) { console.error(e); status("Connexion : " + explain(e), "err"); }
+      };
+      box.appendChild(b);
+    };
+    let i = 0;
+    for (const w of found.values()) add(w.info.name, () => w.provider, i++ === 0);
+    if (!found.size && window.ethereum) add("Wallet du navigateur", () => window.ethereum, true);
+    if (CFG.walletConnectProjectId) add("WalletConnect", walletConnect, !found.size && !window.ethereum);
+    if (!found.size && !window.ethereum) {
+      // Navigateur sans wallet (Chrome ou Safari sur téléphone) : on renvoie vers Trust Wallet,
+      // qui rouvre cette même page dans son navigateur intégré, wallet déjà connecté.
+      const b = document.createElement("button");
+      b.id = "openInTrust";
+      b.textContent = "Ouvrir dans Trust Wallet";
+      if (!box.children.length) b.className = "primary";
+      b.onclick = () => {
+        location.href = "https://link.trustwallet.com/open_url?coin_id=10009000&url=" + encodeURIComponent(location.href);
+      };
+      box.appendChild(b);
+      $("connectHint").textContent = "Aucun wallet dans ce navigateur. Le bouton ouvre cette page dans l'app Trust Wallet, où ton wallet est déjà disponible. Sur ordinateur, installe plutôt l'extension Trust Wallet.";
+    }
+  }
+  window.addEventListener("eip6963:announceProvider", (ev) => { found.set(ev.detail.info.uuid, ev.detail); renderWallets(); });
+  window.dispatchEvent(new Event("eip6963:requestProvider"));
+
+  async function walletConnect() {
+    const mod = await import("https://esm.sh/@walletconnect/ethereum-provider@2");
+    const wc = await mod.EthereumProvider.init({
+      projectId: CFG.walletConnectProjectId, chains: [CFG.chainId], showQrModal: true,
+      rpcMap: { [CFG.chainId]: CFG.rpcUrl },
+      metadata: { name: "Vault p33 Loterie", description: document.querySelector("meta[name=description]").content, url: location.origin, icons: [new URL("icon.svg", location.href).href] },
+    });
+    await wc.connect();
+    return wc;
+  }
+
+  async function ensureChain() {
+    const want = "0x" + Number(CFG.chainId).toString(16);
+    const have = await eip1193.request({ method: "eth_chainId" });
+    if (Number(have) === Number(CFG.chainId)) return;
+    try {
+      await eip1193.request({ method: "wallet_switchEthereumChain", params: [{ chainId: want }] });
+    } catch (e) {
+      if (e.code !== 4902 && !/unrecognized|not been added/i.test(e.message || "")) throw e;
+      await eip1193.request({ method: "wallet_addEthereumChain", params: [{
+        chainId: want, chainName: CFG.chainName, rpcUrls: [CFG.rpcUrl], blockExplorerUrls: [CFG.explorer],
+        nativeCurrency: { name: "Avalanche", symbol: "AVAX", decimals: 18 },
+      }] });
+    }
+  }
+
+  async function connect(p) {
+    eip1193 = p;
+    const accounts = await eip1193.request({ method: "eth_requestAccounts" });
+    if (!accounts.length) throw new Error("Aucun compte autorisé.");
+    await ensureChain();
+    provider = new E.BrowserProvider(eip1193, undefined, { cacheTimeout: -1 });
+    signer = await provider.getSigner();
+    account = await signer.getAddress();
+    if (eip1193.on) {
+      eip1193.on("accountsChanged", () => location.reload());
+      eip1193.on("chainChanged", () => location.reload());
+    }
+    $("connectCard").hidden = true;
+    if (CFG.factory && E.isAddress(CFG.factory)) await openFactory();
+    else await showSetup();
+    status("Connecté : " + account.slice(0, 6) + "…" + account.slice(-4), "ok");
+  }
+
+  // ── première installation : déploiement de la factory depuis le wallet ──
+  async function showSetup() {
+    $("setupCard").hidden = false;
+    const A = CFG.addresses, hint = $("iTickHint");
+    try {
+      const f = new E.Contract(A.clFactory, ["function getPool(address,address,int24) view returns (address)"], provider);
+      const w = new E.Contract(A.wavax, ERC20_ABI, provider);
+      let best = null;
+      for (const ts of [1, 5, 10, 50, 100, 200]) {
+        try {
+          const pool = await f.getPool(A.p33, A.wavax, ts);
+          if (pool === E.ZeroAddress) continue;
+          const liq = await w.balanceOf(pool);
+          if (!best || liq > best.liq) best = { ts, liq };
+        } catch (_) {}
+      }
+      if (best) {
+        $("iTick").value = String(best.ts);
+        hint.textContent = "Pool le plus liquide trouvé : tick spacing " + best.ts + " (" + fmt(best.liq, 2) + " WAVAX dans le pool).";
+      } else {
+        hint.textContent = "Pool non trouvé automatiquement : indique le tick spacing du pool p33/WAVAX (visible sur Pharaoh).";
+      }
+    } catch (_) {
+      hint.textContent = "Recherche du pool impossible : indique le tick spacing à la main.";
+    }
+  }
+
+  $("installBtn").onclick = () => run("Déploiement de la factory", async () => {
+    const A = CFG.addresses;
+    const tick = Number($("iTick").value.trim());
+    if (!Number.isInteger(tick) || tick <= 0) throw new Error("Tick spacing invalide.");
+    const k = $("iKeeper").value.trim();
+    if (k && !E.isAddress(k)) throw new Error("Adresse du robot invalide.");
+    const art = window.FACTORY_ARTIFACT;
+    const c = await new E.ContractFactory(art.abi, art.bytecode, signer).deploy(
+      E.getAddress(A.p33), E.getAddress(A.wavax), E.getAddress(A.lottery), E.getAddress(A.router), tick, k ? E.getAddress(k) : E.ZeroAddress
+    );
+    status("Déploiement de la factory : en attente de confirmation…");
+    await c.waitForDeployment();
+    CFG.factory = await c.getAddress();
+    store.set("factory", CFG.factory);
+    $("setupCard").hidden = true;
+    await openFactory();
+  });
+
+  async function openFactory() {
+    if ((await provider.getCode(CFG.factory)) === "0x") throw new Error("Aucun contrat à l'adresse de la factory sur ce réseau.");
+    factory = new E.Contract(CFG.factory, FACTORY_ABI, signer);
+    const [p33A, wavaxA, lotA] = await Promise.all([factory.p33(), factory.wavax(), factory.lottery()]);
+    p33 = new E.Contract(p33A, ERC20_ABI, signer);
+    wavax = new E.Contract(wavaxA, ERC20_ABI, signer);
+    lottery = new E.Contract(lotA, LOTTERY_ABI, provider);
+    $("factoryInfo").textContent = "Factory " + CFG.factory;
+    $("shareLink").value = location.origin + location.pathname + "?factory=" + CFG.factory;
+    await loadVault();
+  }
+
+  $("copyLink").onclick = async () => {
+    const el = $("shareLink");
+    try { await navigator.clipboard.writeText(el.value); status("Lien copié.", "ok"); }
+    catch (_) { el.select(); status("Sélectionne le lien et copie-le."); }
+  };
+
+  async function loadVault() {
+    let addr = qs.get("vault");
+    if (!addr || !E.isAddress(addr)) {
+      const mine = await factory.vaultsOf(account);
+      addr = mine.length ? mine[mine.length - 1] : null;
+    }
+    if (!addr) {
+      const price = await lottery.ticketPrice();
+      $("cMaxPrice").value = E.formatEther(price * 2n);
+      $("cPriceHint").textContent = "Prix actuel : " + fmt(price) + " WAVAX. Le plafond protège ton budget si le prix du ticket était modifié de façon anormale.";
+      $("createCard").hidden = false;
+      $("dash").hidden = true;
+      return;
+    }
+    vault = new E.Contract(addr, VAULT_ABI, signer);
+    $("vAddr").textContent = addr;
+    $("vLink").href = CFG.explorer + "/address/" + addr;
+    $("createCard").hidden = true;
+    $("dash").hidden = false;
+    await refresh(true);
+  }
+
+  async function refresh(fillSettings = false) {
+    if (!vault) return;
+    const v = vault.target;
+    const [owner, keeper, principal, budget, floor, maxPrice, reinvest, harvestable, winnings, inVault, inWallet, price, claimable, tickets, drawId] =
+      await Promise.all([
+        vault.owner(), vault.keeper(), vault.principalAssets(), vault.ticketBudget(), vault.minWavaxPerP33(),
+        vault.maxTicketPrice(), vault.reinvestWinnings(), vault.harvestable(), vault.winnings(),
+        p33.balanceOf(v), p33.balanceOf(account), lottery.ticketPrice(), lottery.claimable(v),
+        lottery.getOwnerTickets(v), lottery.currentDrawId(),
+      ]);
+    snap = { owner, principal, budget, harvestable, winnings, inVault, inWallet, price, claimable };
+    $("vP33").textContent = fmt(inVault);
+    $("vPrincipal").textContent = fmt(principal);
+    $("vHarvestable").textContent = fmt(harvestable);
+    $("wP33").textContent = fmt(inWallet);
+    $("vBudget").textContent = fmt(budget);
+    $("vAffordable").textContent = price > 0n ? (budget / price).toString() : "–";
+    $("lPrice").textContent = fmt(price);
+    $("vTickets").textContent = tickets.length.toString();
+    $("vWinnings").textContent = fmt(winnings);
+    $("lClaimable").textContent = fmt(claimable);
+    $("notOwner").hidden = owner.toLowerCase() === account.toLowerCase();
+
+    let drawText = "aucun tirage ouvert";
+    if (drawId > 0n) {
+      const d = await lottery.getDraw(drawId);
+      const when = new Date(Number(d.scheduledTime) * 1000);
+      if (d.drawnAt === 0n && when.getTime() > Date.now()) {
+        drawText = "n° " + drawId + ", " + when.toLocaleString("fr-FR", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+      }
+    }
+    $("lDraw").textContent = drawText;
+
+    if (fillSettings) {
+      $("sFloor").value = E.formatEther(floor);
+      $("sMaxPrice").value = E.formatEther(maxPrice);
+      $("sKeeper").value = keeper;
+    }
+    $("sReinvest").checked = reinvest;
+  }
+
+  // ── actions ──
+  $("createBtn").onclick = () => run("Création du vault", async () => {
+    const floor = parseAmount($("cFloor").value);
+    const maxPrice = parseAmount($("cMaxPrice").value);
+    if (floor === 0n || maxPrice === 0n) throw new Error("Les deux prix doivent être supérieurs à zéro.");
+    const tx = await factory.createVault(floor, maxPrice, $("cReinvest").checked);
+    await tx.wait();
+    await loadVault();
+  });
+
+  $("maxP33").onclick = () => { if (snap.inWallet !== undefined) $("amtP33").value = E.formatEther(snap.inWallet); };
+
+  $("depositBtn").onclick = () => run("Dépôt", async () => {
+    const amount = parseAmount($("amtP33").value);
+    if (amount === 0n) throw new Error("Le montant est nul.");
+    if (amount > snap.inWallet) throw new Error("Solde p33 insuffisant dans ton wallet.");
+    if ((await p33.allowance(account, vault.target)) < amount) {
+      status("Dépôt : autorise d'abord le vault à recevoir ton p33 (1/2)…");
+      await (await p33.approve(vault.target, amount)).wait();
+      status("Dépôt : confirme le dépôt (2/2)…");
+    }
+    const tx = await vault.deposit(amount);
+    $("amtP33").value = "";
+    return tx;
+  });
+
+  $("withdrawBtn").onclick = () => run("Retrait", async () => {
+    const amount = parseAmount($("amtP33").value);
+    if (amount === 0n) throw new Error("Le montant est nul.");
+    if (amount > snap.inVault) throw new Error("Le vault contient moins que ce montant.");
+    const tx = await vault.withdraw(amount, account);
+    $("amtP33").value = "";
+    return tx;
+  });
+
+  $("withdrawAllBtn").onclick = () => run("Retrait total", () => vault.withdrawAll(account));
+
+  $("cycleBtn").onclick = () => run("Cycle", async () => {
+    // 1. Gains à réclamer : même calcul que le robot, vérifié contre la racine de la loterie.
+    status("Cycle : recherche de gains à réclamer…");
+    const doneKey = "done." + String(vault.target).toLowerCase();
+    const done = new Set(JSON.parse(store.get(doneKey) || "[]"));
+    const now = BigInt((await provider.getBlock("latest")).timestamp);
+    let plan = { claims: [], resolved: [], mismatched: [] };
+    try {
+      plan = await VaultLib.planClaims({ lottery, owner: vault.target, now, done, lookback: 200 });
+    } catch (e) { console.error(e); }
+    const note = $("claimNote");
+    note.hidden = !plan.mismatched.length;
+    if (plan.mismatched.length) {
+      note.textContent = "Tirage " + plan.mismatched.join(", ") + " : le calcul des gains ne correspond pas à celui de la loterie. Rien n'est réclamé pour ce tirage ; tes gains éventuels y restent en attente.";
+    }
+    const claims = plan.claims.slice(0, 50);
+
+    // 2. Vente : seulement si le cours passe le prix plancher (sinon l'étape est laissée de côté).
+    let amount = 0n, minOut = 0n;
+    if (snap.harvestable > 0n) {
+      try {
+        const quoted = await vault.harvest.staticCall(snap.harvestable, 0n);
+        amount = snap.harvestable;
+        minOut = (quoted * 99n) / 100n;
+      } catch (_) {}
+    }
+    const canBuy = snap.price > 0n && snap.budget >= snap.price;
+    if (amount === 0n && !canBuy && snap.claimable === 0n && !claims.length) {
+      throw new Error(snap.harvestable > 0n
+        ? "Rien à faire : le cours du p33 est sous ton prix plancher et le budget ne couvre pas un ticket."
+        : "Rien à faire pour l'instant : pas de rendement à vendre, pas de gain à réclamer, pas de budget pour un ticket.");
+    }
+    status("Cycle : confirme dans ton wallet…" + (claims.length ? " (" + claims.length + " ticket(s) gagnant(s) inclus)" : ""));
+    const tx = await vault.cycle(amount, minOut, 20n, claims.map((c) => c.id), claims.map((c) => c.rank), claims.map((c) => c.amount), claims.map((c) => c.proof));
+    status("Cycle : en attente de confirmation…");
+    await tx.wait();
+    if (plan.claims.length <= 50) store.set(doneKey, JSON.stringify([...done, ...plan.resolved]));
+  });
+
+  $("collectBtn").onclick = () => run("Encaissement", async () => {
+    if (snap.claimable === 0n) throw new Error("Rien en attente à la loterie.");
+    return vault.collectWinnings();
+  });
+
+  $("withdrawWavaxBtn").onclick = () => run("Retrait des gains", async () => {
+    if (snap.winnings === 0n) throw new Error("Aucun gain disponible.");
+    return vault.withdrawWavax(snap.winnings, account);
+  });
+
+  $("guardsBtn").onclick = () => run("Garde-fous", () => vault.setGuards(parseAmount($("sFloor").value), parseAmount($("sMaxPrice").value)));
+  $("sReinvest").onchange = (ev) => run("Réglage des gains", () => vault.setReinvestWinnings(ev.target.checked));
+  $("keeperBtn").onclick = () => run("Changement de robot", async () => {
+    const k = $("sKeeper").value.trim();
+    if (!E.isAddress(k)) throw new Error("Adresse invalide.");
+    return vault.setKeeper(k);
+  });
+
+  renderWallets();
+})();
+</script>
+</body>
+</html>
