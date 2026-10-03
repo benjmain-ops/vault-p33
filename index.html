@@ -184,6 +184,7 @@
   <footer>
     <p>Jeu d'argent : en moyenne, le rendement joué est perdu. Ton principal reste exposé au cours du p33. Contrats non audités, à utiliser avec des montants que tu peux te permettre de perdre.</p>
     <p class="mono" id="factoryInfo"></p>
+    <p class="mono">Version 2</p>
   </footer>
 </main>
 
@@ -288,6 +289,13 @@
     if (busy) return;
     busy = true;
     document.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    // Si le wallet n'affiche aucune demande de signature, on le dit et on rend la main.
+    const watchdog = setTimeout(() => {
+      if (!busy || !/confirme/.test($("status").textContent)) return;
+      status(label + " : aucune réponse du wallet. S'il n'affiche pas de demande de confirmation, recharge la page et réessaie. Rien n'a été envoyé.", "err");
+      busy = false;
+      document.querySelectorAll("button").forEach((b) => (b.disabled = false));
+    }, 60000);
     try {
       status(label + " : confirme dans ton wallet…");
       const tx = await fn();
@@ -299,9 +307,29 @@
       await refresh().catch(console.error);
       status(label + " : " + explain(e), "err");
     } finally {
+      clearTimeout(watchdog);
       busy = false;
       document.querySelectorAll("button").forEach((b) => (b.disabled = false));
     }
+  }
+
+  // Estimation du gas : par le wallet, sinon par le RPC public. Certains wallets mobiles
+  // répondent mal à cette requête ; on ne les laisse pas bloquer l'envoi.
+  async function gasFor(req) {
+    const tx = Object.assign({ from: account }, req);
+    const sources = [() => provider.estimateGas(tx)];
+    if (CFG.rpcUrl) sources.push(() => new E.JsonRpcProvider(CFG.rpcUrl, Number(CFG.chainId), { staticNetwork: true }).estimateGas(tx));
+    let reverted = null;
+    for (const src of sources) {
+      try {
+        const g = await Promise.race([src(), new Promise((_, no) => setTimeout(() => no(new Error("timeout")), 12000))]);
+        return (g * 12n) / 10n;
+      } catch (e) {
+        if (e && e.code === "CALL_EXCEPTION") reverted = e;
+      }
+    }
+    if (reverted) throw reverted; // la transaction échouerait : on ne l'envoie pas
+    return null; // estimation indisponible : le wallet fera la sienne
   }
 
   // ── wallets ──
@@ -385,6 +413,25 @@
   }
 
   // ── première installation : déploiement de la factory depuis le wallet ──
+  // Beaucoup de wallets mobiles ne savent pas signer une création de contrat (transaction sans
+  // destinataire). On passe donc par le « deterministic deployment proxy », présent sur
+  // Avalanche : c'est un appel de contrat ordinaire, et l'adresse obtenue ne dépend que des
+  // paramètres. Deux personnes qui installent avec les mêmes paramètres partagent la même factory.
+  const CREATE2_PROXY = "0x4e59b44847b379578588920cA78FbF26c0B4956C";
+  const SALT = E.id("p33-lottery-vault/v1");
+  async function factoryPlan(tick, keeper) {
+    const A = CFG.addresses, art = window.FACTORY_ARTIFACT;
+    const dep = await new E.ContractFactory(art.abi, art.bytecode).getDeployTransaction(
+      E.getAddress(A.p33), E.getAddress(A.wavax), E.getAddress(A.lottery), E.getAddress(A.router), tick, keeper
+    );
+    return { initcode: dep.data, predicted: E.getCreate2Address(CREATE2_PROXY, SALT, E.keccak256(dep.data)) };
+  }
+  async function useFactory(addr) {
+    CFG.factory = addr;
+    store.set("factory", addr);
+    $("setupCard").hidden = true;
+    await openFactory();
+  }
   async function showSetup() {
     $("setupCard").hidden = false;
     const A = CFG.addresses, hint = $("iTickHint");
@@ -403,6 +450,9 @@
       if (best) {
         $("iTick").value = String(best.ts);
         hint.textContent = "Pool le plus liquide trouvé : tick spacing " + best.ts + " (" + fmt(best.liq, 2) + " WAVAX dans le pool).";
+        // Quelqu'un a peut-être déjà installé la factory avec ces paramètres : on la réutilise.
+        const { predicted } = await factoryPlan(best.ts, E.ZeroAddress);
+        if ((await provider.getCode(predicted)) !== "0x") return useFactory(predicted);
       } else {
         hint.textContent = "Pool non trouvé automatiquement : indique le tick spacing du pool p33/WAVAX (visible sur Pharaoh).";
       }
@@ -412,21 +462,30 @@
   }
 
   $("installBtn").onclick = () => run("Déploiement de la factory", async () => {
-    const A = CFG.addresses;
     const tick = Number($("iTick").value.trim());
     if (!Number.isInteger(tick) || tick <= 0) throw new Error("Tick spacing invalide.");
     const k = $("iKeeper").value.trim();
     if (k && !E.isAddress(k)) throw new Error("Adresse du robot invalide.");
-    const art = window.FACTORY_ARTIFACT;
-    const c = await new E.ContractFactory(art.abi, art.bytecode, signer).deploy(
-      E.getAddress(A.p33), E.getAddress(A.wavax), E.getAddress(A.lottery), E.getAddress(A.router), tick, k ? E.getAddress(k) : E.ZeroAddress
-    );
-    status("Déploiement de la factory : en attente de confirmation…");
-    await c.waitForDeployment();
-    CFG.factory = await c.getAddress();
-    store.set("factory", CFG.factory);
-    $("setupCard").hidden = true;
-    await openFactory();
+    const keeper = k ? E.getAddress(k) : E.ZeroAddress;
+    const { initcode, predicted } = await factoryPlan(tick, keeper);
+
+    if ((await provider.getCode(CREATE2_PROXY)) === "0x") {
+      // Réseau sans contrat de déploiement : création directe.
+      const tx = await signer.sendTransaction({ data: initcode });
+      status("Déploiement de la factory : en attente de confirmation…");
+      const rc = await tx.wait();
+      return useFactory(rc.contractAddress);
+    }
+    if ((await provider.getCode(predicted)) === "0x") {
+      const req = { to: CREATE2_PROXY, data: E.concat([SALT, initcode]) };
+      const gas = await gasFor(req);
+      if (gas) req.gasLimit = gas;
+      const tx = await signer.sendTransaction(req);
+      status("Déploiement de la factory : en attente de confirmation…");
+      await tx.wait();
+      if ((await provider.getCode(predicted)) === "0x") throw new Error("Le déploiement n'a pas abouti. Réessaie ; si ça se reproduit, le gas accordé par le wallet est insuffisant.");
+    }
+    await useFactory(predicted);
   });
 
   async function openFactory() {
