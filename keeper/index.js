@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * Keeper des vaults p33 -> loterie BCM.
+ * Keeper for the p33 vaults -> BCM lottery.
  *
- *   node keeper/index.js run      un cycle complet (harvest, achat, réclamation) sur chaque vault
- *   node keeper/index.js status   état de chaque vault, sans rien envoyer
+ *   node keeper/index.js run      one full cycle (harvest, purchase, claim) on each vault
+ *   node keeper/index.js status   state of each vault, without sending anything
  *
- * À lancer par cron une à deux fois par jour. Le keeper n'a aucun droit de retrait :
- * il ne fait que déclencher des fonctions bornées par les garde-fous de chaque vault.
+ * Run it from cron once or twice a day. The keeper has no withdrawal rights:
+ * it only triggers functions bounded by each vault's guards.
  */
 const fs = require("fs");
 const path = require("path");
@@ -34,43 +34,43 @@ const fmt = (x) => ethers.formatEther(x);
 
 function defaults(cfg = {}) {
   return {
-    slippageBps: 100n, // tolérance entre simulation et exécution du swap
-    minHarvest: ethers.parseEther("1"), // p33 : en dessous, on laisse s'accumuler
-    buyChunk: 20n, // tickets par transaction (50 max côté loterie)
-    buyCutoff: 300n, // secondes avant le tirage où l'on n'achète plus
-    lookbackTickets: 2000, // tickets récents du vault à examiner pour les gains
+    slippageBps: 100n, // tolerance between the swap simulation and its execution
+    minHarvest: ethers.parseEther("1"), // p33: below this, let it accumulate
+    buyChunk: 20n, // tickets per transaction (50 max on the lottery side)
+    buyCutoff: 300n, // seconds before the draw after which we stop buying
+    lookbackTickets: 2000, // recent vault tickets to scan for winnings
     dryRun: false,
     log: console.log,
     ...cfg,
   };
 }
 
-/** Rendement à vendre maintenant : { amount, minOut }, ou des zéros s'il faut attendre. */
+/** Yield to sell now: { amount, minOut }, or zeros if we have to wait. */
 async function planHarvest(ctx, vault) {
   const { cfg, now } = ctx;
   const none = { amount: 0n, minOut: 0n };
   const harvestable = await vault.harvestable();
   if (harvestable < cfg.minHarvest) return none;
-  if (!inHarvestWindow(now)) return cfg.log(`  vente: hors fenêtre (rachat TWAP en cours ou flip proche)`), none;
-  if ((await vault.minWavaxPerP33()) === 0n) return cfg.log(`  vente: prix plancher non réglé par le propriétaire`), none;
+  if (!inHarvestWindow(now)) return cfg.log(`  harvest: outside the window (TWAP buyback in progress or flip approaching)`), none;
+  if ((await vault.minWavaxPerP33()) === 0n) return cfg.log(`  harvest: floor price not set by the owner`), none;
   let quoted;
   try {
     quoted = await vault.harvest.staticCall(harvestable, 0n);
   } catch (e) {
-    return cfg.log(`  vente: refusée en simulation, cours sous le plancher ? (${e.shortMessage || e.message})`), none;
+    return cfg.log(`  harvest: rejected in simulation, price below the floor? (${e.shortMessage || e.message})`), none;
   }
-  cfg.log(`  vente: ${fmt(harvestable)} p33 -> ~${fmt(quoted)} WAVAX`);
+  cfg.log(`  harvest: ${fmt(harvestable)} p33 -> ~${fmt(quoted)} WAVAX`);
   return { amount: harvestable, minOut: (quoted * (10000n - cfg.slippageBps)) / 10000n };
 }
 
-/** Tickets gagnants du vault à réclamer (calcul partagé avec la page web, voir lib.js). */
+/** Winning tickets of the vault to claim (computation shared with the web page, see lib.js). */
 async function planClaims(ctx, addr) {
   const { cfg, lottery, now, state, trees } = ctx;
   const st = (state[addr.toLowerCase()] ||= { doneDraws: [] });
   return lib.planClaims({ lottery, owner: addr, now, done: new Set(st.doneDraws), trees, lookback: cfg.lookbackTickets, log: cfg.log });
 }
 
-/** Le tirage en cours accepte-t-il encore des achats ? */
+/** Is the current draw still accepting purchases? */
 async function drawIsOpen(ctx) {
   const { cfg, lottery, now } = ctx;
   if (await lottery.paused()) return false;
@@ -83,9 +83,9 @@ async function drawIsOpen(ctx) {
 const split = (c) => [c.map((p) => p.id), c.map((p) => p.rank), c.map((p) => p.amount), c.map((p) => p.proof)];
 
 /**
- * Un passage sur un vault : tout part dans une seule transaction `cycle` (encaissement,
- * vente du rendement, achat de tickets). Des transactions supplémentaires ne suivent que
- * s'il reste plus de 50 gains à réclamer ou plus de tickets à acheter qu'un lot.
+ * One pass over a vault: everything goes into a single `cycle` transaction (collecting
+ * winnings, selling the yield, buying tickets). Extra transactions only follow if there
+ * are more than 50 prizes left to claim or more tickets to buy than one batch.
  */
 async function runVault(ctx, addr) {
   const { cfg, signer, lottery, state } = ctx;
@@ -93,7 +93,7 @@ async function runVault(ctx, addr) {
   cfg.log(`Vault ${addr}`);
   try {
     if ((await vault.keeper()).toLowerCase() !== (await signer.getAddress()).toLowerCase()) {
-      return cfg.log(`  ignoré: ce robot n'est pas celui du vault`);
+      return cfg.log(`  skipped: this keeper is not the vault's keeper`);
     }
     const harvest = await planHarvest(ctx, vault);
     const { claims, resolved } = await planClaims(ctx, addr);
@@ -102,10 +102,10 @@ async function runVault(ctx, addr) {
     const budget = await vault.ticketBudget();
     const pending = await lottery.claimable(addr);
     const willBuy = open && (budget >= price || harvest.amount > 0n);
-    if (!open && budget >= price) cfg.log(`  achat: pas de tirage ouvert, ou ticket au-dessus du plafond du vault`);
+    if (!open && budget >= price) cfg.log(`  purchase: no open draw, or ticket price above the vault's cap`);
 
-    if (harvest.amount === 0n && !claims.length && pending === 0n && !willBuy) return cfg.log(`  rien à faire`);
-    if (cfg.dryRun) return cfg.log(`  (simulation) cycle non envoyé`);
+    if (harvest.amount === 0n && !claims.length && pending === 0n && !willBuy) return cfg.log(`  nothing to do`);
+    if (cfg.dryRun) return cfg.log(`  (dry run) cycle not sent`);
 
     await (await vault.cycle(harvest.amount, harvest.minOut, cfg.buyChunk, ...split(claims.slice(0, 50)))).wait();
     for (let i = 50; i < claims.length; i += 50) {
@@ -119,9 +119,9 @@ async function runVault(ctx, addr) {
         await (await vault.buyTickets(cfg.buyChunk)).wait();
       }
     }
-    cfg.log(`  cycle fait — tickets du vault : ${(await lottery.getOwnerTickets(addr)).length}, budget restant ${fmt(await vault.ticketBudget())} WAVAX`);
+    cfg.log(`  cycle done — vault tickets: ${(await lottery.getOwnerTickets(addr)).length}, remaining budget ${fmt(await vault.ticketBudget())} WAVAX`);
   } catch (e) {
-    cfg.log(`  erreur — ${e.shortMessage || e.message}`);
+    cfg.log(`  error — ${e.shortMessage || e.message}`);
   }
 }
 
@@ -144,28 +144,28 @@ async function status(ctx, addr) {
     v.owner(), v.principalAssets(), v.harvestable(), v.ticketBudget(), v.winnings(), ctx.lottery.claimable(addr),
   ]);
   ctx.cfg.log(
-    `Vault ${addr}\n  propriétaire ${owner}\n  principal ${fmt(principal)} xPHAR | rendement vendable ${fmt(harvestable)} p33\n` +
-      `  budget tickets ${fmt(budget)} WAVAX | gains au vault ${fmt(winnings)} WAVAX | à encaisser ${fmt(claimable)} WAVAX`
+    `Vault ${addr}\n  owner ${owner}\n  principal ${fmt(principal)} xPHAR | sellable yield ${fmt(harvestable)} p33\n` +
+      `  ticket budget ${fmt(budget)} WAVAX | winnings in the vault ${fmt(winnings)} WAVAX | to collect ${fmt(claimable)} WAVAX`
   );
 }
 
 /**
- * Un passage sur tous les vaults. Utilisé par la ligne de commande et par server.js.
+ * One pass over all the vaults. Used by the command line and by server.js.
  * @returns { keeper, gasAvax, lowGas, vaults }
  */
 async function runAll(env, cmd = "run", log = console.log) {
   const { RPC_URL, KEEPER_PRIVATE_KEY, FACTORY, VAULTS, DRY_RUN } = env;
-  if (!RPC_URL || !KEEPER_PRIVATE_KEY) throw new Error("RPC_URL et KEEPER_PRIVATE_KEY sont requis (.env)");
+  if (!RPC_URL || !KEEPER_PRIVATE_KEY) throw new Error("RPC_URL and KEEPER_PRIVATE_KEY are required (.env)");
 
   const provider = new ethers.JsonRpcProvider(RPC_URL);
   const wallet = new ethers.Wallet(KEEPER_PRIVATE_KEY, provider);
   const signer = new ethers.NonceManager(wallet);
 
-  // Sans gas, le robot ne peut rien envoyer : on le dit clairement plutôt que d'échouer étape par étape.
+  // Without gas the keeper cannot send anything: say so clearly rather than failing step by step.
   const minGas = ethers.parseEther(env.MIN_GAS_AVAX || "0.05");
   const gas = await provider.getBalance(wallet.address);
   const lowGas = gas < minGas;
-  log(`Robot ${wallet.address} — gas : ${fmt(gas)} AVAX${lowGas ? `  ⚠ SOUS LE SEUIL de ${fmt(minGas)} AVAX : recharger ce wallet` : ""}`);
+  log(`Keeper ${wallet.address} — gas: ${fmt(gas)} AVAX${lowGas ? `  ⚠ BELOW THE ${fmt(minGas)} AVAX THRESHOLD: top up this wallet` : ""}`);
 
   let vaults = (VAULTS || "").split(",").map((s) => s.trim()).filter(Boolean);
   let lotteryAddress = env.LOTTERY;
@@ -177,11 +177,11 @@ async function runAll(env, cmd = "run", log = console.log) {
       for (let i = 0n; i < n; i++) vaults.push(await factory.allVaults(i));
     }
   } else if (!vaults.length) {
-    throw new Error("Renseigner FACTORY ou VAULTS (.env)");
+    throw new Error("Set FACTORY or VAULTS (.env)");
   }
   const result = { keeper: wallet.address, gasAvax: fmt(gas), lowGas, vaults: vaults.length };
   if (!vaults.length) {
-    log("Aucun vault créé pour l'instant.");
+    log("No vault created yet.");
     return result;
   }
   if (!lotteryAddress) lotteryAddress = await new ethers.Contract(vaults[0], VAULT_ABI, provider).lottery();

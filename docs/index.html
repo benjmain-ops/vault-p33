@@ -92,9 +92,9 @@
   <section class="card" id="setupCard" hidden>
     <h2>Première installation</h2>
     <p>Aucune factory n'est configurée. Tu peux la déployer maintenant depuis ton wallet : une seule transaction, à faire une seule fois. Elle servira ensuite à créer ton vault et ceux des personnes à qui tu donnes le lien.</p>
-    <label for="iTick">Tick spacing du pool p33/WAVAX sur Pharaoh</label>
-    <input id="iTick" type="text" inputmode="numeric">
-    <p class="muted" id="iTickHint">Recherche du pool…</p>
+    <label for="iPool">Pool DLMM p33/WAVAX utilisé pour vendre le rendement</label>
+    <input id="iPool" type="text" spellcheck="false" autocomplete="off">
+    <p class="muted" id="iPoolHint">Vérification du pool…</p>
     <label for="iKeeper">Adresse d'un robot (facultatif)</label>
     <input id="iKeeper" type="text" spellcheck="false" autocomplete="off" placeholder="0x… ou vide">
     <p class="muted">Laisse vide pour tout piloter depuis cette page. Un robot peut être ajouté plus tard, vault par vault.</p>
@@ -184,7 +184,7 @@
   <footer>
     <p>Jeu d'argent : en moyenne, le rendement joué est perdu. Ton principal reste exposé au cours du p33. Contrats non audités, à utiliser avec des montants que tu peux te permettre de perdre.</p>
     <p class="mono" id="factoryInfo"></p>
-    <p class="mono">Version 2</p>
+    <p class="mono">Version 3</p>
   </footer>
 </main>
 
@@ -227,7 +227,7 @@
     "function cycle(uint256 harvestAmount, uint256 minOut, uint256 maxTickets, uint256[] ticketIds, uint8[] ranks, uint256[] amounts, bytes32[][] proofs) returns (uint256, uint256, uint256)",
     "error NotOperator()", "error ZeroAddress()", "error ZeroAmount()", "error FloorNotSet()", "error NothingToBuy()",
     "error ExceedsHarvestable(uint256 requested, uint256 available)", "error Slippage(uint256 received, uint256 minimum)",
-    "error TicketPriceTooHigh(uint256 price, uint256 maxPrice)", "error OwnableUnauthorizedAccount(address account)",
+    "error TicketPriceTooHigh(uint256 price, uint256 maxPrice)", "error WrongPool()", "error OwnableUnauthorizedAccount(address account)",
   ];
   const ERC20_ABI = [
     "function balanceOf(address) view returns (uint256)", "function allowance(address,address) view returns (uint256)",
@@ -247,7 +247,8 @@
     FloorNotSet: "Le prix plancher n'est pas réglé (Réglages).",
     NothingToBuy: "Le budget ne couvre pas un ticket.",
     ExceedsHarvestable: "Montant supérieur au rendement vendable.",
-    Slippage: "Prix obtenu inférieur au minimum : vente annulée.",
+    Slippage: "Le cours du p33 est sous ton prix plancher : vente annulée.",
+    WrongPool: "Ce contrat n'est pas un pool DLMM p33/WAVAX.",
     TicketPriceTooHigh: "Le ticket coûte plus que ton prix maximum (Réglages).",
     OwnableUnauthorizedAccount: "Seul le propriétaire du vault peut faire ça.",
   };
@@ -419,12 +420,23 @@
   // paramètres. Deux personnes qui installent avec les mêmes paramètres partagent la même factory.
   const CREATE2_PROXY = "0x4e59b44847b379578588920cA78FbF26c0B4956C";
   const SALT = E.id("p33-lottery-vault/v1");
-  async function factoryPlan(tick, keeper) {
+  async function factoryPlan(pool, keeper) {
     const A = CFG.addresses, art = window.FACTORY_ARTIFACT;
     const dep = await new E.ContractFactory(art.abi, art.bytecode).getDeployTransaction(
-      E.getAddress(A.p33), E.getAddress(A.wavax), E.getAddress(A.lottery), E.getAddress(A.router), tick, keeper
+      E.getAddress(A.p33), E.getAddress(A.wavax), E.getAddress(A.lottery), E.getAddress(pool), keeper
     );
     return { initcode: dep.data, predicted: E.getCreate2Address(CREATE2_PROXY, SALT, E.keccak256(dep.data)) };
+  }
+  const POOL_ABI = ["function getTokenX() view returns (address)", "function getTokenY() view returns (address)", "function getBinStep() view returns (uint16)"];
+  // Vérifie qu'une adresse est bien un pool DLMM p33/WAVAX ; renvoie { binStep, liq } ou lève une erreur.
+  async function checkPool(addr) {
+    const A = CFG.addresses;
+    const pool = new E.Contract(addr, POOL_ABI, provider);
+    const [x, y, binStep] = await Promise.all([pool.getTokenX(), pool.getTokenY(), pool.getBinStep()]);
+    const pair = [x.toLowerCase(), y.toLowerCase()].sort().join();
+    if (pair !== [A.p33.toLowerCase(), A.wavax.toLowerCase()].sort().join()) throw new Error("Ce pool n'est pas un pool p33/WAVAX.");
+    const liq = await new E.Contract(A.wavax, ERC20_ABI, provider).balanceOf(addr);
+    return { binStep, liq };
   }
   async function useFactory(addr) {
     CFG.factory = addr;
@@ -434,40 +446,27 @@
   }
   async function showSetup() {
     $("setupCard").hidden = false;
-    const A = CFG.addresses, hint = $("iTickHint");
+    const A = CFG.addresses, hint = $("iPoolHint");
+    $("iPool").value = A.pool || "";
     try {
-      const f = new E.Contract(A.clFactory, ["function getPool(address,address,int24) view returns (address)"], provider);
-      const w = new E.Contract(A.wavax, ERC20_ABI, provider);
-      let best = null;
-      for (const ts of [1, 5, 10, 50, 100, 200]) {
-        try {
-          const pool = await f.getPool(A.p33, A.wavax, ts);
-          if (pool === E.ZeroAddress) continue;
-          const liq = await w.balanceOf(pool);
-          if (!best || liq > best.liq) best = { ts, liq };
-        } catch (_) {}
-      }
-      if (best) {
-        $("iTick").value = String(best.ts);
-        hint.textContent = "Pool le plus liquide trouvé : tick spacing " + best.ts + " (" + fmt(best.liq, 2) + " WAVAX dans le pool).";
-        // Quelqu'un a peut-être déjà installé la factory avec ces paramètres : on la réutilise.
-        const { predicted } = await factoryPlan(best.ts, E.ZeroAddress);
-        if ((await provider.getCode(predicted)) !== "0x") return useFactory(predicted);
-      } else {
-        hint.textContent = "Pool non trouvé automatiquement : indique le tick spacing du pool p33/WAVAX (visible sur Pharaoh).";
-      }
-    } catch (_) {
-      hint.textContent = "Recherche du pool impossible : indique le tick spacing à la main.";
+      const { binStep, liq } = await checkPool(A.pool);
+      hint.textContent = "Pool vérifié : DLMM p33/WAVAX, bin step " + binStep + ", " + fmt(liq, 2) + " WAVAX de profondeur.";
+      // Quelqu'un a peut-être déjà installé la factory avec ces paramètres : on la réutilise.
+      const { predicted } = await factoryPlan(A.pool, E.ZeroAddress);
+      if ((await provider.getCode(predicted)) !== "0x") return useFactory(predicted);
+    } catch (e) {
+      hint.textContent = "Pool non vérifié automatiquement : indique l'adresse du pool DLMM p33/WAVAX (visible dans l'adresse de sa page sur Pharaoh).";
     }
   }
 
   $("installBtn").onclick = () => run("Déploiement de la factory", async () => {
-    const tick = Number($("iTick").value.trim());
-    if (!Number.isInteger(tick) || tick <= 0) throw new Error("Tick spacing invalide.");
+    const poolAddr = $("iPool").value.trim();
+    if (!E.isAddress(poolAddr)) throw new Error("Adresse du pool invalide.");
+    try { await checkPool(poolAddr); } catch (e) { throw new Error("Ce contrat n'est pas un pool DLMM p33/WAVAX."); }
     const k = $("iKeeper").value.trim();
     if (k && !E.isAddress(k)) throw new Error("Adresse du robot invalide.");
     const keeper = k ? E.getAddress(k) : E.ZeroAddress;
-    const { initcode, predicted } = await factoryPlan(tick, keeper);
+    const { initcode, predicted } = await factoryPlan(poolAddr, keeper);
 
     if ((await provider.getCode(CREATE2_PROXY)) === "0x") {
       // Réseau sans contrat de déploiement : création directe.

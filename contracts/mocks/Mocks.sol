@@ -5,9 +5,9 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
-// Mocks de test uniquement. MockLottery reprend les règles de PartnerLotteryCore qui
-// concernent le vault : paiement exact, tirage ouvert, propriété du ticket, format de
-// feuille Merkle, délai de 15 min, plafond par tirage, 3 % de frais à l'encaissement.
+// Test-only mocks. MockLottery reproduces the rules of PartnerLotteryCore that
+// concern the vault: exact payment, open draw, ticket ownership, Merkle leaf
+// format, 15 min delay, per-draw cap, 3% fee on collection.
 
 contract MockERC20 is ERC20 {
     constructor(string memory n, string memory s) ERC20(n, s) {}
@@ -39,42 +39,43 @@ contract MockP33 is ERC20 {
     }
 }
 
-contract MockClFactory {
-    mapping(int24 => address) public pools;
+/// @dev Simplified DLMM pool: we send it the input token then call swap().
+contract MockDlmmPool {
+    address public immutable getTokenX;
+    address public immutable getTokenY;
+    uint256 public rate = 0.017e18; // Y received per X sold, 1e18
+    uint256 internal reserveX;
+    uint256 internal reserveY;
 
-    function setPool(int24 tickSpacing, address pool) external {
-        pools[tickSpacing] = pool;
+    constructor(address x, address y) {
+        getTokenX = x;
+        getTokenY = y;
     }
 
-    function getPool(address, address, int24 tickSpacing) external view returns (address) {
-        return pools[tickSpacing];
+    function getBinStep() external pure returns (uint16) {
+        return 25;
     }
-}
-
-contract MockRouter {
-    struct ExactInputSingleParams {
-        address tokenIn;
-        address tokenOut;
-        int24 tickSpacing;
-        address recipient;
-        uint256 deadline;
-        uint256 amountIn;
-        uint256 amountOutMinimum;
-        uint160 sqrtPriceLimitX96;
-    }
-
-    uint256 public rate = 0.017e18; // tokenOut par tokenIn, 1e18
 
     function setRate(uint256 r) external {
         rate = r;
     }
 
-    function exactInputSingle(ExactInputSingleParams calldata p) external payable returns (uint256 out) {
-        require(block.timestamp <= p.deadline, "deadline");
-        out = (p.amountIn * rate) / 1e18;
-        require(out >= p.amountOutMinimum, "Too little received");
-        IERC20(p.tokenIn).transferFrom(msg.sender, address(this), p.amountIn);
-        IERC20(p.tokenOut).transfer(p.recipient, out);
+    /// @dev To be called after funding the pool.
+    function sync() external {
+        reserveX = IERC20(getTokenX).balanceOf(address(this));
+        reserveY = IERC20(getTokenY).balanceOf(address(this));
+    }
+
+    function swap(bool swapForY, address to) external returns (bytes32) {
+        require(swapForY, "mock: X->Y only");
+        uint256 amountIn = IERC20(getTokenX).balanceOf(address(this)) - reserveX;
+        require(amountIn > 0, "LBPair__InsufficientAmountIn");
+        uint256 out = (amountIn * rate) / 1e18;
+        require(out <= reserveY, "LBPair__OutOfLiquidity");
+        reserveX += amountIn;
+        reserveY -= out;
+        IERC20(getTokenY).transfer(to, out);
+        return bytes32(out);
     }
 }
 
@@ -129,7 +130,7 @@ contract MockLottery {
         ticketPrice = price;
     }
 
-    // ── aides de test ──
+    // ── test helpers ──
     function setTicketPrice(uint256 p) external {
         ticketPrice = p;
     }
@@ -165,7 +166,7 @@ contract MockLottery {
         rootPoseA[drawId] = block.timestamp;
     }
 
-    // ── interface PartnerLotteryCore ──
+    // ── PartnerLotteryCore interface ──
     function buyMultipleTickets(
         uint256 drawId,
         uint8[6][] calldata mainNumsArr,

@@ -2,7 +2,7 @@
   "name": "p33-lottery-vault",
   "version": "0.1.0",
   "private": true,
-  "description": "Vault mono-utilisateur : le rendement p33 achète des tickets de la loterie BCM (Avalanche)",
+  "description": "Single-user vault: p33 yield buys BCM lottery tickets (Avalanche)",
   "scripts": {
     "build": "node scripts/build.js",
     "test": "node scripts/build.js && node --test --test-reporter=spec test/vault.test.js",

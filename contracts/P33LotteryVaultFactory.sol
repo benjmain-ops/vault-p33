@@ -5,18 +5,18 @@ import {P33LotteryVault} from "./P33LotteryVault.sol";
 
 /**
  * @title P33LotteryVaultFactory
- * @notice Déploie un vault par utilisateur. L'appelant est le propriétaire du vault créé ;
- *         la factory n'a aucun droit dessus et ne détient jamais de fonds. Elle fixe
- *         seulement les adresses (p33, WAVAX, loterie, router) et tient le registre des
- *         vaults pour que le keeper puisse les parcourir.
+ * @notice Deploys one vault per user. The caller is the owner of the vault created;
+ *         the factory has no rights over it and never holds funds. It only sets
+ *         the addresses (p33, WAVAX, lottery, swap pool) and keeps the registry of
+ *         vaults so that the keeper can iterate over them.
  */
 contract P33LotteryVaultFactory {
     address public immutable p33;
     address public immutable wavax;
     address public immutable lottery;
-    address public immutable router;
-    int24 public immutable tickSpacing;
-    /// @notice Keeper proposé par défaut. Chaque propriétaire peut le changer sur son vault.
+    /// @notice Default p33/WAVAX DLMM pool of the vaults created.
+    address public immutable pool;
+    /// @notice Keeper proposed by default. Each owner can change it on their own vault.
     address public immutable defaultKeeper;
 
     address[] public allVaults;
@@ -28,15 +28,13 @@ contract P33LotteryVaultFactory {
         address p33_,
         address wavax_,
         address lottery_,
-        address router_,
-        int24 tickSpacing_,
+        address pool_,
         address defaultKeeper_
     ) {
         p33 = p33_;
         wavax = wavax_;
         lottery = lottery_;
-        router = router_;
-        tickSpacing = tickSpacing_;
+        pool = pool_;
         defaultKeeper = defaultKeeper_;
     }
 
@@ -51,8 +49,7 @@ contract P33LotteryVaultFactory {
                 p33,
                 wavax,
                 lottery,
-                router,
-                tickSpacing,
+                pool,
                 minWavaxPerP33,
                 maxTicketPrice,
                 reinvestWinnings
@@ -67,7 +64,7 @@ contract P33LotteryVaultFactory {
         return allVaults.length;
     }
 
-    /// @notice Vaults créés par `owner` (ne suit pas les transferts de propriété ultérieurs).
+    /// @notice Vaults created by `owner` (does not track later ownership transfers).
     function vaultsOf(address owner) external view returns (address[] memory) {
         return _vaultsOf[owner];
     }

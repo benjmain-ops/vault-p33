@@ -1,4 +1,4 @@
-// Compile contracts/ avec solc-js et écrit artifacts/<Contrat>.json (abi + bytecode).
+// Compiles contracts/ with solc-js and writes artifacts/<Contract>.json (abi + bytecode).
 const fs = require("fs");
 const path = require("path");
 const solc = require("solc");
@@ -29,7 +29,7 @@ const findImports = (p) => {
     const full = path.join(base, p);
     if (fs.existsSync(full)) return { contents: fs.readFileSync(full, "utf8") };
   }
-  return { error: "introuvable: " + p };
+  return { error: "not found: " + p };
 };
 
 const out = JSON.parse(solc.compile(JSON.stringify(input), { import: findImports }));
@@ -50,8 +50,8 @@ for (const file of Object.keys(out.contracts)) {
 }
 console.log("Compilation OK ->", dir);
 
-// Fichiers générés pour la page web : la factory à déployer depuis le wallet, et la
-// logique de calcul des gains (la même que celle du robot).
+// Files generated for the web page: the factory to deploy from the wallet, and the
+// winnings computation logic (the same as the keeper's).
 const web = path.join(root, "docs");
 const fa = JSON.parse(fs.readFileSync(path.join(dir, "P33LotteryVaultFactory.json"), "utf8"));
 fs.writeFileSync(path.join(web, "factory.js"), "window.FACTORY_ARTIFACT = " + JSON.stringify({ abi: fa.abi, bytecode: fa.bytecode }) + ";\n");
@@ -60,4 +60,4 @@ require("esbuild").buildSync({
   bundle: true, minify: true, format: "iife", globalName: "VaultLib", platform: "browser", target: "es2020",
   outfile: path.join(web, "vaultlib.js"),
 });
-console.log("Page web : factory.js et vaultlib.js générés");
+console.log("Web page: factory.js and vaultlib.js generated");

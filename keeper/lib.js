@@ -1,10 +1,10 @@
-// Logique pure du keeper : rangs, répartition des cagnottes, arbre Merkle, fenêtre de harvest.
+// Pure keeper logic: ranks, prize pool distribution, Merkle tree, harvest window.
 const { StandardMerkleTree } = require("@openzeppelin/merkle-tree");
 
 const WEEK = 604800n;
 const DAY = 86400n;
 
-/** Table des rangs de PartnerLotteryCore._getRank : R1 = 6+2 ... R12 = 3+0. */
+/** Rank table of PartnerLotteryCore._getRank: R1 = 6+2 ... R12 = 3+0. */
 function getRank(mainMatches, compMatches, isRun2) {
   if (mainMatches < 3) return 0;
   const rank = (6 - mainMatches) * 3 + (2 - compMatches) + 1;
@@ -27,20 +27,20 @@ function combinations(arr, k) {
 }
 
 /**
- * Recalcule les gagnants d'un tirage à partir des données on-chain.
+ * Recomputes the winners of a draw from on-chain data.
  *
  * @param draw    { winningMain: number[7], winningComp: number[2], rankPools: bigint[12], isRun2 }
- *                lu APRÈS la pose de la racine (les rangs non gagnés y sont déjà remis à zéro).
+ *                read AFTER the root has been set (ranks nobody won are already zeroed in it).
  * @param tickets [{ id: bigint, owner, mainNumbers: number[9], compNumbers: number[3],
  *                   isSystemPlay, systemMainCount, systemCompCount }]
- * @returns [{ id, owner, rank, amount }] pour les tickets dont le gain est > 0.
+ * @returns [{ id, owner, rank, amount }] for the tickets whose prize is > 0.
  *
- * HYPOTHÈSES (le calcul officiel est fait hors chaîne par le poller de BCM, non publié) :
- *  - la cagnotte d'un rang est divisée à parts égales entre les grilles gagnantes du rang ;
- *  - un ticket « system play » compte pour chacune de ses combinaisons ; sa feuille porte
- *    son meilleur rang et la somme de ses parts.
- * Le keeper compare toujours la racine recalculée à la racine on-chain avant de réclamer :
- * si une hypothèse est fausse, il s'arrête sans rien envoyer.
+ * ASSUMPTIONS (the official computation is done off-chain by BCM's poller, which is not published):
+ *  - a rank's prize pool is split equally between the winning lines of that rank;
+ *  - a "system play" ticket counts once for each of its combinations; its leaf carries
+ *    its best rank and the sum of its shares.
+ * The keeper always compares the recomputed root to the on-chain root before claiming:
+ * if an assumption is wrong, it stops without sending anything.
  */
 function computeWinners(draw, tickets) {
   const winMain = new Set(draw.winningMain.map(Number));
@@ -79,7 +79,7 @@ function computeWinners(draw, tickets) {
   return winners;
 }
 
-/** Arbre au format attendu par claimTicketPrize : feuille = (ticketId, owner, rank, amount). */
+/** Tree in the format expected by claimTicketPrize: leaf = (ticketId, owner, rank, amount). */
 function buildTree(winners) {
   if (!winners.length) return null;
   return StandardMerkleTree.of(
@@ -88,7 +88,7 @@ function buildTree(winners) {
   );
 }
 
-/** Preuves pour les tickets appartenant à `owner`. */
+/** Proofs for the tickets belonging to `owner`. */
 function proofsFor(tree, owner) {
   const out = [];
   if (!tree) return out;
@@ -101,9 +101,9 @@ function proofsFor(tree, owner) {
 }
 
 /**
- * Fenêtre de harvest. Les epochs Pharaoh basculent le jeudi 00:00 UTC (l'epoch Unix a
- * commencé un jeudi) ; le ratio p33 monte pendant les 24 h de rachat TWAP qui suivent.
- * On ne vend donc qu'à partir du vendredi 00:00 UTC, plus une marge.
+ * Harvest window. Pharaoh epochs flip on Thursday 00:00 UTC (the Unix epoch
+ * started on a Thursday); the p33 ratio rises during the 24 h TWAP buyback that follows.
+ * So we only sell from Friday 00:00 UTC onwards, plus a margin.
  */
 function inHarvestWindow(timestamp, marginSeconds = 3600n) {
   const sinceFlip = BigInt(timestamp) % WEEK;
@@ -111,10 +111,10 @@ function inHarvestWindow(timestamp, marginSeconds = 3600n) {
 }
 
 const ZERO_ROOT = "0x" + "0".repeat(64);
-const SENTINEL_ROOT = "0x" + "0".repeat(63) + "1"; // tirage déclaré sans gagnant
+const SENTINEL_ROOT = "0x" + "0".repeat(63) + "1"; // draw declared with no winner
 const CLAIM_DELAY = 15n * 60n;
 
-/** Lit un tirage complet et reconstruit son arbre Merkle. null si la racine ne correspond pas. */
+/** Reads a full draw and rebuilds its Merkle tree. null if the root does not match. */
 async function loadDrawTree(lottery, drawId, draw) {
   const ids = await lottery.getDrawTickets(drawId);
   const tickets = [];
@@ -144,10 +144,10 @@ async function loadDrawTree(lottery, drawId, draw) {
 }
 
 /**
- * Tickets gagnants de `owner` à réclamer.
- * @param lottery contrat ethers de la loterie (lecture)
- * @param done    Set des tirages déjà traités (chaînes)
- * @returns { claims: [{id, rank, amount, proof}], resolved: [tirages à marquer traités], mismatched: [tirages dont la racine diffère] }
+ * Winning tickets of `owner` to claim.
+ * @param lottery ethers contract of the lottery (read-only)
+ * @param done    Set of the draws already processed (strings)
+ * @returns { claims: [{id, rank, amount, proof}], resolved: [draws to mark as processed], mismatched: [draws whose root differs] }
  */
 async function planClaims({ lottery, owner, now, done = new Set(), trees = new Map(), lookback = 2000, log = () => {} }) {
   const claims = [];
@@ -163,7 +163,7 @@ async function planClaims({ lottery, owner, now, done = new Set(), trees = new M
   for (const drawId of draws) {
     const key = drawId.toString();
     const draw = await lottery.getDraw(drawId);
-    if (!draw.finalized || draw.merkleRoot === ZERO_ROOT) continue; // pas encore résolu
+    if (!draw.finalized || draw.merkleRoot === ZERO_ROOT) continue; // not resolved yet
     if (draw.merkleRoot === SENTINEL_ROOT) {
       resolved.push(key);
       continue;
@@ -174,14 +174,14 @@ async function planClaims({ lottery, owner, now, done = new Set(), trees = new M
     const tree = trees.get(key);
     if (!tree) {
       mismatched.push(key);
-      log(`  gains: tirage ${key} — racine recalculée différente de la racine on-chain, rien n'est envoyé. À traiter à la main.`);
+      log(`  winnings: draw ${key} — recomputed root differs from the on-chain root, nothing is sent. Handle manually.`);
       continue;
     }
     const mine = [];
     for (const p of proofsFor(tree, owner)) if (!(await lottery.ticketPrizeClaimed(p.id))) mine.push(p);
     if (mine.length) {
       const sum = mine.reduce((a, p) => a + p.amount, 0n);
-      log(`  gains: tirage ${key} — ${mine.length} ticket(s) gagnant(s), ${sum} wei brut`);
+      log(`  winnings: draw ${key} — ${mine.length} winning ticket(s), ${sum} wei gross`);
       claims.push(...mine);
     }
     resolved.push(key);
