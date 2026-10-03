@@ -24,10 +24,14 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   const lottery = await deploy("MockLottery", deployer, wavax.target, E("0.19"));
   await (await wavax.mint(router.target, E("1000"))).wait();
   await (await wavax.mint(lottery.target, E("100"))).wait();
+  // comme sur Avalanche : le contrat de déploiement déterministe existe, et un pool p33/WAVAX aussi
+  await provider.send("evm_setAccountCode", ["0x4e59b44847b379578588920cA78FbF26c0B4956C", "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"]);
+  const clFactory = await deploy("MockClFactory", deployer);
+  await (await clFactory.setPool(200, router.target)).wait();
   await (await p33.mint(user.address, E("2500"))).wait();
   const CONFIG = "window.VAULT_CONFIG = " + JSON.stringify({
     factory: "", chainId: 43114, chainName: "Avalanche C-Chain", rpcUrl: "", explorer: "https://snowscan.xyz", walletConnectProjectId: "",
-    addresses: { p33: p33.target, wavax: wavax.target, lottery: lottery.target, router: router.target, clFactory: keeper.address },
+    addresses: { p33: p33.target, wavax: wavax.target, lottery: lottery.target, router: router.target, clFactory: clFactory.target },
   }) + ";";
 
   // page + passerelle RPC sur la même origine
@@ -104,7 +108,7 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   await page.waitForSelector("#setupCard:not([hidden])");
   await page.waitForFunction(() => !document.getElementById("iTickHint").textContent.includes("Recherche"));
   await shot("1b-installation");
-  await page.fill("#iTick", "200");
+  assert.equal(await page.inputValue("#iTick"), "200", "tick spacing détecté automatiquement");
   await page.click("#installBtn");
   await page.waitForSelector("#createCard:not([hidden])", { timeout: 60000 });
   const factoryAddr = await page.evaluate(() => localStorage.getItem("p33vault.factory"));
@@ -113,7 +117,9 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   assert.equal(await factory.lottery(), lottery.target);
   assert.equal(await factory.tickSpacing(), 200n);
   assert.equal(await factory.defaultKeeper(), ethers.ZeroAddress);
-  step("factory déployée depuis la page, sans robot");
+  const initcode = (await new ethers.ContractFactory(art("P33LotteryVaultFactory").abi, art("P33LotteryVaultFactory").bytecode).getDeployTransaction(p33.target, wavax.target, lottery.target, router.target, 200, ethers.ZeroAddress)).data;
+  assert.equal(factoryAddr, ethers.getCreate2Address("0x4e59b44847b379578588920cA78FbF26c0B4956C", ethers.id("p33-lottery-vault/v1"), ethers.keccak256(initcode)), "adresse déterministe");
+  step("factory déployée depuis la page par un appel classique, sans robot");
 
   // 1. pas encore de vault -> formulaire de création pré-rempli
   assert.equal(await page.inputValue("#cMaxPrice"), "0.38");
@@ -163,7 +169,7 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   const other = await browser.newPage({ viewport: { width: 390, height: 844 }, locale: "fr-FR" });
   await other.addInitScript(INIT, stranger.address.toLowerCase());
   assert.equal(await page.inputValue("#shareLink"), `${base}/?factory=${factoryAddr}`);
-  await other.goto(`${base}/?factory=${factoryAddr}&vault=${vaultAddr}`);
+  await other.goto(`${base}/?vault=${vaultAddr}`); // sans ?factory= : la page retrouve la factory par son adresse déterministe
   await other.click("#walletList button");
   await other.waitForSelector("#notOwner:not([hidden])");
   await other.click("#withdrawAllBtn");

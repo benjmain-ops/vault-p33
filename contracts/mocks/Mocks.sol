@@ -39,6 +39,18 @@ contract MockP33 is ERC20 {
     }
 }
 
+contract MockClFactory {
+    mapping(int24 => address) public pools;
+
+    function setPool(int24 tickSpacing, address pool) external {
+        pools[tickSpacing] = pool;
+    }
+
+    function getPool(address, address, int24 tickSpacing) external view returns (address) {
+        return pools[tickSpacing];
+    }
+}
+
 contract MockRouter {
     struct ExactInputSingleParams {
         address tokenIn;
