@@ -849,5 +849,12 @@ test("results bot: the latest draw is published once to the Telegram chat, with 
   assert.equal(seen[0].body.parse_mode, "HTML");
   assert.deepEqual(seen[0].body.reply_markup, { inline_keyboard: [[{ text: "Jouer sur example.org", url: "https://example.org/play/" }]] });
   await assert.rejects(send({ token: "bad", chat: "@results", text: fr, api }), /Telegram refused the message \(403, Forbidden: bot is not a member/);
+  // the picture of the result: an HTML card with the numbers, the pool and the jackpot figure
+  const { cardHtml } = require("../keeper/announce");
+  const card = cardHtml({ ...data, reserve: E("100") }, { lang: "fr", tz: "UTC" });
+  assert.match(card, /Tirage n° 1/);
+  assert.equal((card.match(/class="ball"/g) || []).length, 7);
+  assert.equal((card.match(/class="ball extra"/g) || []).length, 2);
+  assert.match(card, /<b>100,15<\/b><span>WAVAX, cagnotte et réserve du jackpot/);
   server.close();
 });

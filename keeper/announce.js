@@ -9,6 +9,9 @@
  * the chat (ANNOUNCE_BOT_TOKEN) and the chat itself (ANNOUNCE_CHAT: "@channel" or a numeric id).
  */
 const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const { execFileSync } = require("child_process");
 const { ethers } = require("ethers");
 const lib = require("./lib");
 
@@ -19,6 +22,8 @@ const LOTTERY_ABI = [
   "function ticketPrice() view returns (uint256)",
   "function currentDrawId() view returns (uint256)",
   "function getDrawTickets(uint256) view returns (uint256[])",
+  "function jackpotFundAddress() view returns (address)",
+  "function token() view returns (address)",
   "function getDraw(uint256) view returns (tuple(uint256 id,uint256 scheduledTime,uint256 drawnAt,uint8[7] winningMain,uint8[2] winningComp,uint256 prizePool,uint256[12] rankPools,uint256 drawVolume,bool isRun2,bool finalized,bool hasRank1Winner,bytes32 merkleRoot))",
   "function getTicket(uint256) view returns (tuple(uint256 id,uint256 drawId,address owner,uint8[9] mainNumbers,uint8[3] compNumbers,bool isSystemPlay,uint8 systemMainCount,uint8 systemCompCount,uint8 rank,bool claimed,uint256 grossWinAmount))",
 ];
@@ -35,6 +40,8 @@ const TEXT = {
     next: (when, pool, price) => `Prochain tirage ${when} : ${pool} WAVAX déjà en jeu, ticket à ${price} WAVAX.`,
     notOpen: "Le prochain tirage n'est pas encore ouvert.",
     play: (site) => `Jouer sur ${site}`,
+    cardTitle: "Loterie AVAX", cardDraw: (n) => `Tirage n° ${n}`, cardSold: "tickets joués", cardPool: "WAVAX en jeu", cardWinners: "tickets gagnants",
+    cardNext: (when) => `Prochain tirage ${when}`, cardJackpot: "WAVAX, cagnotte et réserve du jackpot",
     at: "à",
   },
   en: {
@@ -48,6 +55,8 @@ const TEXT = {
     next: (when, pool, price) => `Next draw ${when}: ${pool} WAVAX in play already, ticket at ${price} WAVAX.`,
     notOpen: "The next draw is not open yet.",
     play: (site) => `Play on ${site}`,
+    cardTitle: "AVAX lottery", cardDraw: (n) => `Draw no. ${n}`, cardSold: "tickets played", cardPool: "WAVAX in play", cardWinners: "winning tickets",
+    cardNext: (when) => `Next draw ${when}`, cardJackpot: "WAVAX, prize pool and jackpot reserve",
     at: "at",
   },
 };
@@ -87,7 +96,13 @@ async function collect(lottery, draw) {
   for (const t of tickets) { const r = bestRank(t, draw); if (r) byRank.set(r, (byRank.get(r) || 0) + 1); }
   const [currentId, price] = await Promise.all([lottery.currentDrawId(), lottery.ticketPrice()]);
   const next = currentId > draw.id ? await lottery.getDraw(currentId) : null;
-  return { draw, sold: tickets.length, byRank, next: next && next.drawnAt === 0n ? next : null, price };
+  // the jackpot reserve: what the lottery's jackpot fund holds, on top of the pool of the open draw
+  let reserve = 0n;
+  try {
+    const [fund, token] = await Promise.all([lottery.jackpotFundAddress(), lottery.token()]);
+    if (fund !== ethers.ZeroAddress) reserve = await new ethers.Contract(token, ["function balanceOf(address) view returns (uint256)"], lottery.runner).balanceOf(fund);
+  } catch {}
+  return { draw, sold: tickets.length, byRank, next: next && next.drawnAt === 0n ? next : null, price, reserve };
 }
 
 /** The message, in Telegram's HTML. */
@@ -119,6 +134,70 @@ function buildMessage({ draw, sold, byRank, next, price }, { lang = "fr", tz = "
   return lines.join("\n");
 }
 
+/** The result as a picture: an HTML card, 1200 x 675, rendered by a headless Chrome. */
+function cardHtml({ draw, sold, byRank, next, reserve = 0n }, { lang = "fr", tz = "Europe/Paris", font = "" } = {}) {
+  const L = TEXT[lang] || TEXT.fr;
+  const when = (ts) => {
+    const d = new Date(Number(ts) * 1000);
+    return `${d.toLocaleDateString(L.locale, { weekday: "short", day: "numeric", month: "short", timeZone: tz })} ${L.at} ${d.toLocaleTimeString(L.locale, { hour: "2-digit", minute: "2-digit", timeZone: tz })}`;
+  };
+  const winners = [...byRank.values()].reduce((a, n) => a + n, 0);
+  const balls = Array.from(draw.winningMain, Number).map((n) => `<span class="ball">${n}</span>`).join("") +
+    `<span class="plus">+</span>` + Array.from(draw.winningComp, Number).map((n) => `<span class="ball extra">${n}</span>`).join("");
+  const stat = (value, label) => `<div class="stat"><b>${esc(value)}</b><span>${esc(label)}</span></div>`;
+  const jackpot = (next ? next.prizePool : 0n) + reserve;
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+  ${font ? `@font-face { font-family: "Archivo"; src: url("${font}") format("woff2"); font-weight: 100 900; font-stretch: 62% 125%; }` : ""}
+  * { box-sizing: border-box; }
+  /* A headless Chrome's viewport is a little shorter than its window: the card fills the viewport
+     and the page colour continues below it. */
+  html { min-height: 675px; background: radial-gradient(900px 520px at 78% -10%, rgba(220, 47, 51, 0.38), transparent 70%), radial-gradient(700px 420px at 0% 100%, rgba(220, 47, 51, 0.2), transparent 70%), #0B0D12; }
+  body { margin: 0; width: 100vw; height: 100vh; overflow: hidden; color: #F4F5F7; font-family: "Archivo", "DejaVu Sans", Arial, sans-serif;
+    padding: 62px 64px 8px; display: flex; flex-direction: column; justify-content: space-between; }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; }
+  .head small { display: block; font-size: 30px; color: #AAB1BD; font-weight: 500; }
+  h1 { margin: 2px 0 0; font-size: 104px; line-height: 1; font-weight: 800; font-stretch: 66%; }
+  .date { font-size: 30px; color: #AAB1BD; text-align: right; padding-top: 8px; }
+  .balls { display: flex; align-items: center; gap: 14px; }
+  .ball { flex: none; width: 100px; height: 100px; border-radius: 50%; display: grid; place-items: center; font-size: 50px; font-weight: 800; font-stretch: 66%; color: #fff;
+    background: radial-gradient(circle at 32% 28%, #FF7A70, #DC2F33 58%, #A51B1F); box-shadow: 0 0 34px rgba(220, 47, 51, 0.55), inset 0 -8px 0 rgba(0, 0, 0, 0.18); }
+  .ball.extra { color: #15181D; background: radial-gradient(circle at 32% 28%, #FFFFFF, #DCE1E8 62%, #AEB6C2); box-shadow: 0 0 30px rgba(255, 255, 255, 0.28), inset 0 -8px 0 rgba(0, 0, 0, 0.1); }
+  .plus { font-size: 54px; font-weight: 700; color: #7C8594; padding: 0 2px; }
+  .foot { display: flex; justify-content: space-between; align-items: flex-end; gap: 40px; }
+  .stats { display: flex; gap: 46px; }
+  .stat b { display: block; font-size: 54px; font-weight: 800; font-stretch: 66%; line-height: 1.05; }
+  .stat span { font-size: 24px; color: #AAB1BD; }
+  .next { text-align: right; }
+  .next span { display: block; font-size: 24px; color: #AAB1BD; }
+  .next b { display: block; font-size: 76px; font-weight: 800; font-stretch: 66%; line-height: 1.05; color: #F2C230; }
+</style></head><body>
+  <div class="head"><div><small>${esc(L.cardTitle)}</small><h1>${esc(L.cardDraw(draw.id))}</h1></div><div class="date">${esc(when(draw.scheduledTime))}</div></div>
+  <div class="balls">${balls}</div>
+  <div class="foot">
+    <div class="stats">${stat(sold, L.cardSold)}${stat(fmt(draw.prizePool, 2, L.locale), L.cardPool)}${stat(winners, L.cardWinners)}</div>
+    ${next ? `<div class="next"><span>${esc(L.cardNext(when(next.scheduledTime)))}</span><b>${esc(fmt(jackpot, 2, L.locale))}</b><span>${esc(L.cardJackpot)}</span></div>` : ""}
+  </div>
+</body></html>`;
+}
+
+/** Renders the card to a PNG with whatever Chrome is installed. Returns the file's path, or null. */
+function renderCard(data, opts = {}) {
+  const candidates = [process.env.CHROME, "google-chrome", "google-chrome-stable", "chromium", "chromium-browser"].filter(Boolean);
+  let font = "";
+  try { font = "data:font/woff2;base64," + fs.readFileSync(path.join(__dirname, "..", "docs", "play", "fonts", "archivo.woff2")).toString("base64"); } catch {}
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "card-"));
+  const html = path.join(dir, "card.html"), png = path.join(dir, "card.png");
+  fs.writeFileSync(html, cardHtml(data, { ...opts, font }));
+  for (const bin of candidates) {
+    try {
+      execFileSync(bin, ["--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=1", "--window-size=1200,675",
+        "--virtual-time-budget=4000", "--user-data-dir=" + path.join(dir, "profile"), "--screenshot=" + png, "file://" + html], { stdio: "ignore", timeout: 60000 });
+      if (fs.existsSync(png) && fs.statSync(png).size > 5000) return png;
+    } catch {}
+  }
+  return null;
+}
+
 /**
  * The chat as the bot API wants it: "@name" or a numeric id. A public link (t.me/name) is
  * accepted too. An invitation link (t.me/+...) belongs to a private chat and names nothing.
@@ -133,14 +212,22 @@ function chatId(value) {
   throw new Error("ANNOUNCE_CHAT is not a channel name: expected @name, a t.me/name link or a numeric id");
 }
 
-async function send({ token, chat, text, playUrl, preview = true, lang = "fr", api = "https://api.telegram.org" }) {
+async function send({ token, chat, text, playUrl, photo = null, lang = "fr", api = "https://api.telegram.org" }) {
   const L = TEXT[lang] || TEXT.fr;
-  const body = { chat_id: chat, text, parse_mode: "HTML" };
-  if (playUrl) {
-    body.link_preview_options = preview ? { url: playUrl, prefer_large_media: true } : { is_disabled: true };
-    body.reply_markup = { inline_keyboard: [[{ text: L.play(new URL(playUrl).hostname.replace(/^www\./, "")), url: playUrl }]] };
-  } else body.link_preview_options = { is_disabled: true };
-  const res = await fetch(`${api}/bot${token}/sendMessage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const markup = playUrl ? { inline_keyboard: [[{ text: L.play(new URL(playUrl).hostname.replace(/^www\./, "")), url: playUrl }]] } : null;
+  let res;
+  if (photo) {
+    // the picture carries the result; the text goes with it as its caption
+    const form = new FormData();
+    form.append("chat_id", chat); form.append("caption", text); form.append("parse_mode", "HTML");
+    if (markup) form.append("reply_markup", JSON.stringify(markup));
+    form.append("photo", new Blob([fs.readFileSync(photo)], { type: "image/png" }), "tirage.png");
+    res = await fetch(`${api}/bot${token}/sendPhoto`, { method: "POST", body: form });
+  } else {
+    const body = { chat_id: chat, text, parse_mode: "HTML", link_preview_options: { is_disabled: true } };
+    if (markup) body.reply_markup = markup;
+    res = await fetch(`${api}/bot${token}/sendMessage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  }
   if (!res.ok) {
     // The answer can name the chat: only the status and Telegram's own short reason are kept.
     let why = "";
@@ -173,13 +260,18 @@ async function main() {
   if (env.FORCE !== "1" && now - draw.drawnAt > 11n * 3600n) return console.log("The latest draw is more than 11 hours old: not published.");
 
   const lang = env.ANNOUNCE_LANG === "en" ? "en" : "fr";
-  const text = buildMessage(await collect(lottery, draw), { lang, tz: env.ANNOUNCE_TZ || "Europe/Paris" });
+  const tz = env.ANNOUNCE_TZ || "Europe/Paris";
+  const data = await collect(lottery, draw);
+  const text = buildMessage(data, { lang, tz });
+  // a picture of the result, unless switched off or no browser is there to draw it (then: text only)
+  const photo = env.ANNOUNCE_CARD === "off" ? null : renderCard(data, { lang, tz });
+  if (env.CARD_FILE && photo) fs.copyFileSync(photo, env.CARD_FILE);
   // The button points to the lottery's own site, unless another address is configured
   // (PLAY_URL=none removes the button).
   const playUrl = env.PLAY_URL === "none" ? "" : (env.PLAY_URL || OFFICIAL_SITE).trim();
   if (env.DRY_RUN === "1") return console.log(text.replace(/<\/?b>/g, ""));
   if (!env.ANNOUNCE_BOT_TOKEN || !env.ANNOUNCE_CHAT) return console.log("Not configured: add the ANNOUNCE_BOT_TOKEN and ANNOUNCE_CHAT secrets (README, Results bot).");
-  await send({ token: env.ANNOUNCE_BOT_TOKEN.trim(), chat: chatId(env.ANNOUNCE_CHAT), text, playUrl, preview: env.ANNOUNCE_PREVIEW !== "off", lang, api: env.TELEGRAM_API });
+  await send({ token: env.ANNOUNCE_BOT_TOKEN.trim(), chat: chatId(env.ANNOUNCE_CHAT), text, playUrl, photo, lang, api: env.TELEGRAM_API });
   if (env.PUBLISHED_FILE) fs.writeFileSync(env.PUBLISHED_FILE, draw.id.toString() + "\n"); // lets the workflow remember this draw
   console.log("published");
 }
@@ -191,4 +283,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { latestExecuted, collect, buildMessage, send, bestRank, chatId };
+module.exports = { latestExecuted, collect, buildMessage, send, bestRank, chatId, cardHtml, renderCard };
