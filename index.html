@@ -91,7 +91,7 @@
   <!-- Essai à blanc -->
   <section class="card" id="dryCard" hidden>
     <h2>Tester sans rien déployer</h2>
-    <p>Simulation sur l'état réel d'Avalanche : factory, vault, dépôt, vente du rendement sur le vrai pool, cycle en une transaction, achat de tickets sur la vraie loterie, retrait. Rien n'est signé ni envoyé, aucun gas. La réclamation de gains n'est pas couverte : elle demande un ticket gagnant.</p>
+    <p>Simulation sur l'état réel d'Avalanche : factory, vault, dépôt, vente du rendement sur le vrai pool, cycle en une transaction, achat de tickets sur la vraie loterie, versement au wallet joueur, retrait. Rien n'est signé ni envoyé, aucun gas. La réclamation de gains n'est pas couverte : elle demande un ticket gagnant.</p>
     <div class="actions"><button id="dryBtn">Lancer la simulation</button></div>
     <div id="dryOut"></div>
   </section>
@@ -101,11 +101,8 @@
     <h2>Première installation</h2>
     <p>Aucune factory n'est configurée. Tu peux la déployer maintenant depuis ton wallet : une seule transaction, à faire une seule fois. Elle servira ensuite à créer ton vault et ceux des personnes à qui tu donnes le lien.</p>
     <label for="iPool">Pool DLMM p33/WAVAX utilisé pour vendre le rendement</label>
-    <input id="iPool" type="text" spellcheck="false" autocomplete="off">
+    <input id="iPool" type="text" spellcheck="false" autocomplete="off" readonly>
     <p class="muted" id="iPoolHint">Vérification du pool…</p>
-    <label for="iKeeper">Adresse d'un robot (facultatif)</label>
-    <input id="iKeeper" type="text" spellcheck="false" autocomplete="off" placeholder="0x… ou vide">
-    <p class="muted">Laisse vide pour tout piloter depuis cette page. Un robot peut être ajouté plus tard, vault par vault.</p>
     <div class="actions"><button class="primary" id="installBtn">Déployer la factory</button></div>
   </section>
 
@@ -118,6 +115,9 @@
     <input id="cMaxPrice" type="text" inputmode="decimal">
     <p class="muted" id="cPriceHint"></p>
     <label class="check"><input id="cReinvest" type="checkbox"> <span>Rejouer les gains en tickets, dans la limite de 10 tickets par encaissement ; le surplus reste de côté. Décoché : tous les gains restent de côté.</span></label>
+    <label for="cPlayer">Wallet joueur (facultatif)</label>
+    <input id="cPlayer" type="text" spellcheck="false" autocomplete="off" placeholder="0x… ou vide">
+    <p class="muted">Vide : le vault achète lui-même les tickets et les détient. Rempli : le vault verse le WAVAX du rendement à ce wallet, qui achète les tickets à son nom (profil BCM, parrainage, récompenses). Ce wallet devient aussi le robot autorisé à lancer le cycle ; il n'a aucun droit de retrait. Modifiable plus tard dans les réglages.</p>
     <div class="actions"><button class="primary" id="createBtn">Créer mon vault</button></div>
   </section>
 
@@ -146,10 +146,16 @@
       <div class="row"><span>Prix du ticket</span><span><span id="lPrice">–</span> WAVAX</span></div>
       <div class="row"><span>Prochain tirage</span><span id="lDraw">–</span></div>
       <div class="row"><span>Tickets achetés au total</span><span id="vTickets">–</span></div>
+      <div id="playerBox" hidden>
+        <div class="row"><span>Wallet joueur</span><span class="mono" id="pAddr">–</span></div>
+        <div class="row"><span>WAVAX sur le wallet joueur</span><span id="pWavax">–</span></div>
+        <div class="row"><span>AVAX pour ses frais</span><span id="pGas">–</span></div>
+        <div class="row"><span>Gains à encaisser par le wallet joueur</span><span><span id="pClaimable">–</span> WAVAX</span></div>
+      </div>
       <div class="actions">
         <button id="cycleBtn">Lancer le cycle maintenant</button>
       </div>
-      <p class="muted" style="margin-top:12px">Une seule transaction : encaisse les gains en attente, vend le rendement, achète les tickets. Le robot le fait tout seul ; le bouton sert si tu veux le déclencher toi-même.</p>
+      <p class="muted" style="margin-top:12px" id="cycleHelp">Une seule transaction : encaisse les gains en attente, vend le rendement, achète les tickets. Le robot le fait tout seul ; le bouton sert si tu veux le déclencher toi-même.</p>
     </section>
 
     <section class="card">
@@ -180,6 +186,10 @@
         <input id="sMaxPrice" type="text" inputmode="decimal">
         <div class="actions"><button id="guardsBtn">Enregistrer les garde-fous</button></div>
         <label class="check"><input id="sReinvest" type="checkbox"> <span>Rejouer les gains en tickets (10 tickets au plus par encaissement, le surplus reste de côté)</span></label>
+        <label for="sPlayer">Wallet joueur (0x000…000 = le vault achète lui-même)</label>
+        <input id="sPlayer" type="text" spellcheck="false" autocomplete="off">
+        <div class="actions"><button id="playerBtn">Changer de wallet joueur</button></div>
+        <p class="muted" style="margin-top:12px">Le wallet joueur reçoit le WAVAX du rendement à chaque passage et achète les tickets à son nom. Le bouton le déclare aussi comme robot (deux confirmations si le robot change).</p>
         <label for="sKeeper">Adresse du robot (keeper)</label>
         <input id="sKeeper" type="text" spellcheck="false" autocomplete="off">
         <div class="actions"><button id="keeperBtn">Changer de robot</button></div>
@@ -193,7 +203,7 @@
   <footer>
     <p>Jeu d'argent : en moyenne, le rendement joué est perdu. Ton principal reste exposé au cours du p33. Contrats non audités, à utiliser avec des montants que tu peux te permettre de perdre.</p>
     <p class="mono" id="factoryInfo"></p>
-    <p class="mono">Version 7</p>
+    <p class="mono">Version 8</p>
   </footer>
 </main>
 
@@ -213,15 +223,16 @@
   };
   // priorité : lien partagé, puis config.js, puis factory déployée depuis ce navigateur
   const factoryFromLink = !!qs.get("factory");
+  const factoryFromStore = !factoryFromLink && !(window.VAULT_CONFIG || {}).factory && !!store.get("factory");
   CFG.factory = qs.get("factory") || CFG.factory || store.get("factory") || "";
   const $ = (id) => document.getElementById(id);
   const E = ethers;
 
   const FACTORY_ABI = [
     "function p33() view returns (address)", "function wavax() view returns (address)",
-    "function lottery() view returns (address)", "function defaultKeeper() view returns (address)",
+    "function lottery() view returns (address)",
     "function vaultsOf(address) view returns (address[])",
-    "function createVault(uint16 maxDeviationBps, uint256 maxTicketPrice, uint256 reinvestCap) returns (address)",
+    "function createVault(uint16 maxDeviationBps, uint256 maxTicketPrice, uint256 reinvestCap, address keeper, address player) returns (address)",
     "function pool() view returns (address)", "function isVault(address) view returns (bool)",
     "event VaultCreated(address indexed owner, address vault)",
   ];
@@ -234,11 +245,14 @@
     "function deposit(uint256 shares)", "function withdraw(uint256 shares, address to)",
     "function withdrawAll(address to)", "function withdrawWavax(uint256 amount, address to)",
     "function setKeeper(address)", "function setGuards(uint256, uint256, uint16)",
+    "function player() view returns (address)", "function setPlayer(address)",
+    "function refTime() view returns (uint40)", "function MIN_REF_AGE() view returns (uint256)",
     "function maxDeviationBps() view returns (uint16)", "function referencePrice() view returns (uint256)", "function floorPrice() view returns (uint256)", "function setReinvestCap(uint256)",
     "function harvest(uint256 amountIn, uint256 minOut) returns (uint256)",
     "function collectWinnings()",
-    "function cycle(uint256 harvestAmount, uint256 minOut, uint256 maxTickets, uint256[] ticketIds, uint8[] ranks, uint256[] amounts, bytes32[][] proofs) returns (uint256, uint256, uint256)",
-    "error NotOperator()", "error ZeroAddress()", "error ZeroAmount()", "error FloorNotSet()", "error NothingToBuy()",
+    "function cycle(uint256 harvestAmount, uint256 minOut, uint256 maxTickets, uint256[] ticketIds, uint8[] ranks, uint256[] amounts, bytes32[][] proofs) returns (uint256 harvested, uint256 ticketsBought, uint256 collected)",
+    "error NotOperator()", "error ZeroAddress()", "error ZeroAmount()", "error NothingToBuy()",
+    "error ReferenceTooRecent()", "error PoolUnavailable()", "error PlayerMode()", "error NotAContract()", "error ProtectedToken()", "error TokenMismatch()",
     "error ExceedsHarvestable(uint256 requested, uint256 available)", "error Slippage(uint256 received, uint256 minimum)",
     "error TicketPriceTooHigh(uint256 price, uint256 maxPrice)", "error WrongPool()",
     "error InvalidRecipient()", "error GuardTooHigh()", "error LotteryUnavailable()", "error RenounceDisabled()", "error OwnableUnauthorizedAccount(address account)",
@@ -258,7 +272,9 @@
   const ERRORS_FR = {
     NotOperator: "Ce wallet n'a pas le droit de faire cette opération.",
     ZeroAmount: "Le montant est nul.",
-    FloorNotSet: "Le prix plancher n'est pas réglé (Réglages).",
+    ReferenceTooRecent: "Le cours de référence vient d'être mis à jour : la vente est possible 6 heures après.",
+    PoolUnavailable: "Le pool ne répond pas pour l'instant.",
+    PlayerMode: "Ce vault verse son budget au wallet joueur : il n'achète pas de tickets lui-même.",
     NothingToBuy: "Le budget ne couvre pas un ticket.",
     ExceedsHarvestable: "Montant supérieur au rendement vendable.",
     Slippage: "Le cours du p33 est trop loin sous le cours de référence : vente annulée. Elle repassera au prochain passage si le cours se stabilise.",
@@ -271,6 +287,8 @@
   };
 
   const VAULT_IFACE = new E.Interface(VAULT_ABI);
+  const OWNER_ONLY = ["depositBtn", "withdrawBtn", "withdrawAllBtn", "withdrawWavaxBtn", "guardsBtn", "playerBtn", "keeperBtn"];
+  const NOT_OWNER = "Ce wallet n'est pas le propriétaire de ce vault : rien n'est envoyé.";
   let eip1193, provider, signer, account, factory, vault, p33, wavax, lottery, snap = {};
 
   // ── affichage ──
@@ -425,6 +443,14 @@
       eip1193.on("chainChanged", () => location.reload());
     }
     $("connectCard").hidden = true;
+    // Une factory mémorisée par ce navigateur peut dater d'une version précédente du code :
+    // elle n'est reprise que si c'est bien celle de la version actuelle.
+    if (factoryFromStore) {
+      try {
+        if ((await provider.getCode(CFG.factory)) === "0x") throw new Error("absente");
+        await assertGenuineFactory(new E.Contract(CFG.factory, FACTORY_ABI, provider));
+      } catch (_) { CFG.factory = ""; store.set("factory", ""); }
+    }
     if (CFG.factory && E.isAddress(CFG.factory)) await openFactory();
     else await showSetup();
     status("Connecté : " + account.slice(0, 6) + "…" + account.slice(-4), "ok");
@@ -437,10 +463,10 @@
   // paramètres. Deux personnes qui installent avec les mêmes paramètres partagent la même factory.
   const CREATE2_PROXY = "0x4e59b44847b379578588920cA78FbF26c0B4956C";
   const SALT = E.id("p33-lottery-vault/v1");
-  async function factoryPlan(pool, keeper) {
+  async function factoryPlan(pool) {
     const A = CFG.addresses, art = window.FACTORY_ARTIFACT;
     const dep = await new E.ContractFactory(art.abi, art.bytecode).getDeployTransaction(
-      E.getAddress(A.p33), E.getAddress(A.wavax), E.getAddress(A.lottery), E.getAddress(pool), keeper
+      E.getAddress(A.p33), E.getAddress(A.wavax), E.getAddress(A.lottery), E.getAddress(pool)
     );
     return { initcode: dep.data, predicted: E.getCreate2Address(CREATE2_PROXY, SALT, E.keccak256(dep.data)) };
   }
@@ -470,21 +496,17 @@
       const { binStep, liq } = await checkPool(A.pool);
       hint.textContent = "Pool vérifié : DLMM p33/WAVAX, bin step " + binStep + ", " + fmt(liq, 2) + " WAVAX de profondeur.";
       // Quelqu'un a peut-être déjà installé la factory avec ces paramètres : on la réutilise.
-      const { predicted } = await factoryPlan(A.pool, E.ZeroAddress);
+      const { predicted } = await factoryPlan(A.pool);
       if ((await provider.getCode(predicted)) !== "0x") return useFactory(predicted);
     } catch (e) {
-      hint.textContent = "Pool non vérifié automatiquement : indique l'adresse du pool DLMM p33/WAVAX (visible dans l'adresse de sa page sur Pharaoh).";
+      hint.textContent = "Le pool n'a pas pu être vérifié pour l'instant. Recharge la page ; si ça persiste, le réseau ne répond pas.";
     }
   }
 
   $("installBtn").onclick = () => run("Déploiement de la factory", async () => {
-    const poolAddr = $("iPool").value.trim();
-    if (!E.isAddress(poolAddr)) throw new Error("Adresse du pool invalide.");
+    const poolAddr = CFG.addresses.pool;
     try { await checkPool(poolAddr); } catch (e) { throw new Error("Ce contrat n'est pas un pool DLMM p33/WAVAX."); }
-    const k = $("iKeeper").value.trim();
-    if (k && !E.isAddress(k)) throw new Error("Adresse du robot invalide.");
-    const keeper = k ? E.getAddress(k) : E.ZeroAddress;
-    const { initcode, predicted } = await factoryPlan(poolAddr, keeper);
+    const { initcode, predicted } = await factoryPlan(poolAddr);
 
     if ((await provider.getCode(CREATE2_PROXY)) === "0x") {
       // Réseau sans contrat de déploiement : création directe.
@@ -510,9 +532,11 @@
   // approuver et déposer du p33 dans un faux contrat.
   async function assertGenuineFactory(f) {
     const A = CFG.addresses, same = (x, y) => x.toLowerCase() === y.toLowerCase();
-    const [p, w, l, pool, keeper] = await Promise.all([f.p33(), f.wavax(), f.lottery(), f.pool(), f.defaultKeeper()]);
-    if (!same(p, A.p33) || !same(w, A.wavax) || !same(l, A.lottery)) throw new Error("Factory non reconnue : elle ne vise pas les bons contrats. N'utilise pas ce lien.");
-    const { predicted } = await factoryPlan(pool, keeper);
+    const [p, w, l, pool] = await Promise.all([f.p33(), f.wavax(), f.lottery(), f.pool()]);
+    // Le pool fait partie des contrats imposés : une factory authentique mais créée avec un
+    // autre pool enverrait chaque vente de rendement dans ce pool-là.
+    if (!same(p, A.p33) || !same(w, A.wavax) || !same(l, A.lottery) || !same(pool, A.pool)) throw new Error("Factory non reconnue : elle ne vise pas les bons contrats. N'utilise pas ce lien.");
+    const { predicted } = await factoryPlan(A.pool);
     if (!same(predicted, CFG.factory)) throw new Error("Factory non reconnue : ce n'est pas le contrat attendu. N'utilise pas ce lien.");
   }
 
@@ -566,14 +590,30 @@
   async function refresh(fillSettings = false) {
     if (!vault) return;
     const v = vault.target;
-    const [owner, keeper, principal, budget, floor, maxPrice, reinvest, harvestable, winnings, inVault, inWallet, price, claimable, tickets, drawId, dev, refPrice] =
+    const [owner, keeper, principal, budget, floor, maxPrice, reinvest, harvestable, winnings, inVault, inWallet, price, claimable, tickets, drawId, dev, refPrice, player] =
       await Promise.all([
         vault.owner(), vault.keeper(), vault.principalAssets(), vault.ticketBudget(), vault.minWavaxPerP33(),
         vault.maxTicketPrice(), vault.reinvestCap(), vault.harvestable(), vault.winnings(),
         p33.balanceOf(v), p33.balanceOf(account), lottery.ticketPrice(), lottery.claimable(v),
-        lottery.getOwnerTickets(v), lottery.currentDrawId(), vault.maxDeviationBps(), vault.referencePrice(),
+        lottery.getOwnerTickets(v), lottery.currentDrawId(), vault.maxDeviationBps(), vault.referencePrice(), vault.player(),
       ]);
-    snap = { owner, principal, budget, harvestable, winnings, inVault, inWallet, price, claimable, maxPrice };
+    const playerMode = player !== E.ZeroAddress;
+    snap = { owner, keeper, principal, budget, harvestable, winnings, inVault, inWallet, price, claimable, maxPrice, player, playerMode };
+    let playerTickets = 0;
+    $("playerBox").hidden = !playerMode;
+    if (playerMode) {
+      const [pTickets, pWavax, pGas, pClaimable] = await Promise.all([
+        lottery.getOwnerTickets(player), wavax.balanceOf(player), provider.getBalance(player), lottery.claimable(player),
+      ]);
+      playerTickets = pTickets.length;
+      $("pAddr").textContent = player.slice(0, 6) + "…" + player.slice(-4);
+      $("pWavax").textContent = fmt(pWavax) + (price > 0n ? " (" + (pWavax / price) + " ticket(s))" : "");
+      $("pGas").textContent = fmt(pGas) + " AVAX";
+      $("pClaimable").textContent = fmt(pClaimable);
+    }
+    $("cycleHelp").textContent = playerMode
+      ? "Une seule transaction : vend le rendement et verse le WAVAX au wallet joueur. Les tickets sont achetés par le wallet joueur lui-même, via son robot. Le bouton sert si tu veux déclencher la vente toi-même."
+      : "Une seule transaction : encaisse les gains en attente, vend le rendement, achète les tickets. Le robot le fait tout seul ; le bouton sert si tu veux le déclencher toi-même.";
     $("vP33").textContent = fmt(inVault);
     $("vPrincipal").textContent = fmt(principal);
     $("vHarvestable").textContent = fmt(harvestable);
@@ -582,10 +622,15 @@
     $("vBudget").textContent = fmt(budget);
     $("vAffordable").textContent = price > 0n ? (budget / price).toString() : "–";
     $("lPrice").textContent = fmt(price);
-    $("vTickets").textContent = tickets.length.toString();
+    $("vTickets").textContent = (tickets.length + playerTickets).toString();
     $("vWinnings").textContent = fmt(winnings);
     $("lClaimable").textContent = fmt(claimable);
-    $("notOwner").hidden = owner.toLowerCase() === account.toLowerCase();
+    const isOwner = owner.toLowerCase() === account.toLowerCase();
+    snap.isOwner = isOwner;
+    $("notOwner").hidden = isOwner;
+    // Un vault dont ce wallet n'est pas propriétaire est en lecture seule : aucune
+    // autorisation, aucun dépôt, aucun réglage ne part vers lui depuis cette page.
+    for (const id of OWNER_ONLY) $(id).hidden = !isOwner;
 
     let drawText = "aucun tirage ouvert";
     if (drawId > 0n) {
@@ -602,6 +647,7 @@
       $("sDev").value = String(Number(dev) / 100);
       $("sMaxPrice").value = E.formatEther(maxPrice);
       $("sKeeper").value = keeper;
+      $("sPlayer").value = player;
     }
     $("sReinvest").checked = reinvest > 0n;
   }
@@ -638,7 +684,7 @@
     status("Simulation en cours…");
     try {
       const A = CFG.addresses;
-      const poolAddr = ($("iPool").value || "").trim() || A.pool;
+      const poolAddr = A.pool;
       const token = new E.Contract(A.p33, ERC20_ABI, provider);
       const bal = await token.balanceOf(account);
       if (bal === 0n) throw new Error("Ce wallet n'a pas de p33. La simulation utilise ton solde réel (sans le dépenser) : il en faut un peu.");
@@ -693,9 +739,10 @@
       if (r.ticketPrice > 0n && r.swapped) {
         line("Rendement nécessaire par ticket", "≈ " + fmt((r.p33Sold * r.ticketPrice) / r.wavaxOut, 1) + " p33");
       }
-      if (r.deposited) line("Retrait total", r.withdrawn ? fmt(r.p33Back, 2) + " p33 et " + fmt(r.wavaxBack, 6) + " WAVAX récupérés" : "échec", r.withdrawn);
+      if (r.deposited) line("Versement au wallet joueur", r.paidOut ? fmt(r.paid, 6) + " WAVAX" : "échec", r.paidOut);
+      if (r.deposited) line("Retrait total", r.withdrawn ? fmt(r.p33Back, 2) + " p33 récupérés" : "échec", r.withdrawn);
       if (r.error && r.error !== "0x" && !buyNote) line("Cause", decodeRevert(r.error), false);
-      const coreOk = r.created && r.deposited && r.swapped && r.cycled && r.withdrawn;
+      const coreOk = r.created && r.deposited && r.swapped && r.cycled && r.paidOut && r.withdrawn;
       if (coreOk && r.bought) status("Simulation réussie : toutes les étapes passent sur les vrais contrats. Rien n'a été envoyé.", "ok");
       else if (coreOk && buyNote) status("Dépôt, vente, cycle et retrait passent sur les vrais contrats. L'achat de tickets n'a pas pu être simulé : solde p33 trop faible. Rien n'a été envoyé.", "ok");
       else status("Simulation terminée : au moins une étape échoue, voir le détail. Rien n'a été envoyé.", "err");
@@ -713,7 +760,12 @@
     const maxPrice = parseAmount($("cMaxPrice").value);
     if (maxPrice === 0n) throw new Error("Le prix maximum du ticket doit être supérieur à zéro.");
     // 1000 = vente refusée à plus de 10 % sous le cours de référence
-    const tx = await factory.createVault(1000, maxPrice, $("cReinvest").checked ? snap.price * 10n : 0n);
+    const pl = $("cPlayer").value.trim();
+    if (pl && !E.isAddress(pl)) throw new Error("Adresse du wallet joueur invalide.");
+    const player = pl ? E.getAddress(pl) : E.ZeroAddress;
+    if (player.toLowerCase() === account.toLowerCase()) throw new Error("Le wallet joueur doit être un autre wallet que celui-ci : c'est lui que le robot pilotera.");
+    // le wallet joueur est aussi le robot autorisé à lancer le cycle (aucun droit de retrait)
+    const tx = await factory.createVault(1000, maxPrice, $("cReinvest").checked ? snap.price * 10n : 0n, player, player);
     await tx.wait();
     await loadVault();
   });
@@ -721,6 +773,8 @@
   $("maxP33").onclick = () => { if (snap.inWallet !== undefined) $("amtP33").value = E.formatEther(snap.inWallet); };
 
   $("depositBtn").onclick = () => run("Dépôt", async () => {
+    // jamais d'autorisation p33 vers un vault qui n'est pas celui de ce wallet
+    if (!snap.isOwner || (await vault.owner()).toLowerCase() !== account.toLowerCase()) throw new Error(NOT_OWNER);
     const amount = parseAmount($("amtP33").value);
     if (amount === 0n) throw new Error("Le montant est nul.");
     if (amount > snap.inWallet) throw new Error("Solde p33 insuffisant dans ton wallet.");
@@ -762,23 +816,38 @@
     }
     const claims = plan.claims.slice(0, 50);
 
-    // 2. Vente : seulement si le cours passe le prix plancher (sinon l'étape est laissée de côté).
-    let amount = 0n, minOut = 0n;
+    // 2. Vente. On simule le passage : si le cours est trop loin sous le cours de référence,
+    //    le vault laisse la vente de côté de lui-même, mais le passage est quand même envoyé,
+    //    car c'est lui qui fait suivre le cours de référence.
+    let amount = 0n, minOut = 0n, postponed = false, tooRecent = false;
     if (snap.harvestable > 0n) {
-      try {
-        const quoted = await vault.harvest.staticCall(snap.harvestable, 0n);
+      const [refTime, minAge] = await Promise.all([vault.refTime(), vault.MIN_REF_AGE()]);
+      tooRecent = now - refTime < minAge;
+      if (!tooRecent) {
         amount = snap.harvestable;
-        minOut = (quoted * 99n) / 100n;
-      } catch (_) {}
+        try {
+          const quote = await vault.cycle.staticCall(amount, 0n, 0n, [], [], [], []);
+          if (quote.harvested > 0n) minOut = (quote.harvested * 99n) / 100n;
+          else { postponed = true; amount = 0n; } // rien n'est mis en vente : le passage ne fait que suivre le cours
+        } catch (_) { amount = 0n; }
+      }
     }
-    const canBuy = snap.price > 0n && snap.budget >= snap.price;
-    if (amount === 0n && !canBuy && snap.claimable === 0n && !claims.length) {
-      throw new Error(snap.harvestable > 0n
-        ? "Rien à faire : le cours du p33 est trop loin sous le cours de référence (la vente repassera au prochain passage) et le budget ne couvre pas un ticket."
-        : "Rien à faire pour l'instant : pas de rendement à vendre, pas de gain à réclamer, pas de budget pour un ticket.");
+    const canBuy = snap.playerMode ? snap.budget > 0n : (snap.price > 0n && snap.budget >= snap.price);
+    if (amount === 0n && !postponed && !canBuy && snap.claimable === 0n && !claims.length) {
+      throw new Error(tooRecent
+        ? "Rien à faire pour l'instant : le cours de référence a été mis à jour il y a moins de 6 heures, la vente du rendement repassera ensuite."
+        : snap.playerMode
+          ? "Rien à faire pour l'instant : pas de rendement à vendre, pas de budget à verser au wallet joueur."
+          : "Rien à faire pour l'instant : pas de rendement à vendre, pas de gain à réclamer, pas de budget pour un ticket.");
     }
-    status("Cycle : confirme dans ton wallet…" + (claims.length ? " (" + claims.length + " ticket(s) gagnant(s) inclus)" : ""));
-    const tx = await vault.cycle(amount, minOut, 20n, claims.map((c) => c.id), claims.map((c) => c.rank), claims.map((c) => c.amount), claims.map((c) => c.proof));
+    if (postponed) status("Cycle : le cours du p33 est trop loin sous le cours de référence. La vente est reportée ; ce passage met le cours de référence à jour : confirme dans ton wallet…");
+    else status("Cycle : confirme dans ton wallet…" + (claims.length ? " (" + claims.length + " ticket(s) gagnant(s) inclus)" : ""));
+    const args = [amount, minOut, 20n, claims.map((c) => c.id), claims.map((c) => c.rank), claims.map((c) => c.amount), claims.map((c) => c.proof)];
+    // Marge de gas : une étape laissée de côté à la simulation peut devenir possible avant
+    // que la transaction soit minée.
+    let overrides = {};
+    try { overrides = { gasLimit: ((await vault.cycle.estimateGas(...args)) * 3n) / 2n }; } catch (_) {}
+    const tx = await vault.cycle(...args, overrides);
     status("Cycle : en attente de confirmation…");
     await tx.wait();
     if (plan.claims.length <= 50) store.set(doneKey, JSON.stringify([...done, ...plan.resolved]));
@@ -799,7 +868,28 @@
     if (!(pct > 0 && pct <= 50)) throw new Error("L'écart maximal doit être entre 0 et 50 %.");
     return vault.setGuards(parseAmount($("sFloor").value), parseAmount($("sMaxPrice").value), Math.round(pct * 100));
   });
-  $("sReinvest").onchange = (ev) => run("Réglage des gains", () => vault.setReinvestCap(ev.target.checked ? snap.price * 10n : 0n));
+  $("sReinvest").onchange = (ev) => run("Réglage des gains", () => { if (!snap.isOwner) throw new Error(NOT_OWNER); return vault.setReinvestCap(ev.target.checked ? snap.price * 10n : 0n); });
+  $("playerBtn").onclick = () => run("Changement de wallet joueur", async () => {
+    const pl = $("sPlayer").value.trim();
+    if (!E.isAddress(pl)) throw new Error("Adresse invalide.");
+    const player = E.getAddress(pl);
+    if (!snap.isOwner) throw new Error(NOT_OWNER);
+    if (player.toLowerCase() === account.toLowerCase()) throw new Error("Le wallet joueur doit être un autre wallet que celui-ci.");
+    if (player.toLowerCase() !== snap.player.toLowerCase()) {
+      status("Wallet joueur : confirme dans ton wallet (1/2)…");
+      await (await vault.setPlayer(player)).wait();
+    }
+    // le wallet joueur est aussi le robot : c'est lui qui déclenche la vente du rendement
+    if (player !== E.ZeroAddress && player.toLowerCase() !== snap.keeper.toLowerCase()) {
+      status("Wallet joueur : autorise-le à lancer le cycle (2/2)…");
+      return vault.setKeeper(player);
+    }
+    // plus de wallet joueur : l'ancien n'a plus à pouvoir lancer le cycle
+    if (player === E.ZeroAddress && snap.player !== E.ZeroAddress && snap.keeper.toLowerCase() === snap.player.toLowerCase()) {
+      status("Wallet joueur : retire-lui le droit de lancer le cycle (2/2)…");
+      return vault.setKeeper(E.ZeroAddress);
+    }
+  });
   $("keeperBtn").onclick = () => run("Changement de robot", async () => {
     const k = $("sKeeper").value.trim();
     if (!E.isAddress(k)) throw new Error("Adresse invalide.");
