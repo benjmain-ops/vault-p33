@@ -82,7 +82,7 @@ stores it (two-factor authentication on GitHub).
 5. In the **Actions** tab, enable workflows, open **play**, and use **Run workflow** with
    "dry run" ticked to check the configuration. Then let the schedule do its work.
 
-Optional repository *variables*:
+Optional settings, as repository *variables* (or secrets, both are read):
 
 - `TICKETS_PER_DRAW`: fixed number of tickets per draw. By default the bot spreads what the wallet
   holds over the draws left before the next weekly sale, with at least one ticket per draw while

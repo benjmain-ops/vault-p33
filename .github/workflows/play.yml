@@ -46,9 +46,10 @@ jobs:
           PLAYER_PRIVATE_KEY: ${{ secrets.PLAYER_PRIVATE_KEY }}
           VAULT: ${{ secrets.VAULT }}
           RPC_URL: ${{ secrets.RPC_URL }}
-          TICKETS_PER_DRAW: ${{ vars.TICKETS_PER_DRAW }}
-          KEEP_TICKETS: ${{ vars.KEEP_TICKETS }}
-          SHOW_AMOUNTS: ${{ vars.SHOW_AMOUNTS }}
+          # optional settings: accepted as repository variables or as secrets
+          TICKETS_PER_DRAW: ${{ vars.TICKETS_PER_DRAW || secrets.TICKETS_PER_DRAW }}
+          KEEP_TICKETS: ${{ vars.KEEP_TICKETS || secrets.KEEP_TICKETS }}
+          SHOW_AMOUNTS: ${{ vars.SHOW_AMOUNTS || secrets.SHOW_AMOUNTS }}
           DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
           RECAP_FILE: ${{ runner.temp }}/recap.txt
           # a manual run always produces a recap, which also tests the notification
