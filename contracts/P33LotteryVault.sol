@@ -18,6 +18,8 @@ interface IP33 {
 interface IDlmmPool {
     function getTokenX() external view returns (address);
     function getTokenY() external view returns (address);
+    /// @dev Width of a bin, in basis points.
+    function getBinStep() external view returns (uint16);
     /// @dev Bin currently traded.
     function getActiveId() external view returns (uint24);
     /// @dev Price of token X in token Y at a given bin, as a 128.128 fixed-point number.
@@ -55,6 +57,12 @@ interface IBcmLottery {
  *         yield (the rise of the p33:xPHAR ratio) is sold for WAVAX and spent on tickets
  *         of the BCM lottery.
  *
+ * Two ways to play:
+ *  - `player` unset: the vault buys the tickets itself and holds them.
+ *  - `player` set: the vault only produces the budget. Each pass sends the WAVAX from the
+ *    yield to that wallet, which buys the tickets in its own name. This is the mode to use
+ *    when the lottery account must be an ordinary wallet (profile, referral, rewards).
+ *
  * Roles:
  *  - owner  : deposits, withdraws, sets the guards. The only one able to take funds out.
  *  - keeper : triggers harvest / purchase / claim. Cannot withdraw anything; the harm it
@@ -77,6 +85,8 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
     IBcmLottery public immutable lottery;
 
     address public keeper;
+    /// @notice If set, the ticket budget is paid out to this wallet instead of being spent by the vault.
+    address public player;
     /// @notice p33/WAVAX DLMM pool used to sell the yield.
     IDlmmPool public pool;
     /// @dev True if p33 is the pool's token X (we then sell X for Y).
@@ -90,20 +100,25 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
     ///         The automatic protection below does not need it.
     uint256 public minWavaxPerP33;
 
-    /// @notice Reference price, kept by the vault itself: the pool bin observed at an earlier
-    ///         pass. A sale is refused if it would execute more than `maxDeviationBps` below the
-    ///         price of that bin. Nothing to maintain by hand: the reference follows the market
-    ///         from one pass to the next.
+    /// @notice Reference price, kept by the vault itself: a pool bin recorded at an earlier pass.
+    ///         A sale is refused if it would execute more than `maxDeviationBps` below the price
+    ///         of that bin. Nothing to maintain by hand: every pass moves the reference towards
+    ///         the market, by at most `maxDeviationBps` at a time, and a reference written by a
+    ///         pass cannot be sold against until it is MIN_REF_AGE old. A manipulated price at
+    ///         the time of one pass can therefore neither be used in that pass nor drag the
+    ///         reference far.
     uint24 public refId;
-    /// @notice Time at which the reference was recorded.
+    /// @notice Time at which the reference was recorded by a pass (0 = set by the owner).
     uint40 public refTime;
     /// @notice Maximum distance below the reference price accepted for a sale, in basis points.
     uint16 public maxDeviationBps;
+    /// @dev Bin width of the pool, in basis points.
+    uint16 internal binStep;
 
-    /// @dev The reference is only replaced once it is this old, so that it cannot be set and
-    ///      used within the same transaction or block.
-    uint256 public constant MIN_REF_AGE = 1 hours;
+    uint256 public constant MIN_REF_AGE = 6 hours;
+    uint16 internal constant MIN_DEVIATION_BPS = 100;
     uint16 internal constant MAX_DEVIATION_BPS = 5000;
+
     /// @notice Maximum price accepted for a ticket. 0 = purchase blocked.
     uint256 public maxTicketPrice;
     /// @notice Maximum WAVAX moved from collected winnings back into the ticket budget, per
@@ -122,11 +137,14 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
     event BudgetFunded(uint256 amount);
     event WavaxWithdrawn(address indexed to, uint256 amount);
     event KeeperSet(address keeper);
+    event PlayerSet(address player);
+    event PaidOut(address indexed player, uint256 amount);
     event GuardsSet(uint256 minWavaxPerP33, uint256 maxTicketPrice, uint16 maxDeviationBps);
     event ReferenceUpdated(uint24 id);
     event PoolSet(address pool);
     event ReinvestCapSet(uint256 cap);
     event Rescued(address indexed token, address indexed to, uint256 amount);
+    event Executed(address indexed target, uint256 value, bytes data);
 
     error NotOperator();
     error ZeroAddress();
@@ -143,6 +161,10 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
     error GuardTooHigh();
     error LotteryUnavailable();
     error RenounceDisabled();
+    error ReferenceTooRecent();
+    error PoolUnavailable();
+    error NotAContract();
+    error PlayerMode();
 
     modifier onlyOperator() {
         if (msg.sender != keeper && msg.sender != owner()) revert NotOperator();
@@ -158,7 +180,8 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
         address pool_,
         uint16 maxDeviationBps_,
         uint256 maxTicketPrice_,
-        uint256 reinvestCap_
+        uint256 reinvestCap_,
+        address player_
     ) Ownable(owner_) {
         if (p33_ == address(0) || wavax_ == address(0) || lottery_ == address(0)) {
             revert ZeroAddress();
@@ -169,10 +192,12 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
         lottery = IBcmLottery(lottery_);
         keeper = keeper_;
         _setPool(pool_);
-        if (maxDeviationBps_ == 0 || maxDeviationBps_ > MAX_DEVIATION_BPS) revert GuardTooHigh();
+        if (maxDeviationBps_ < MIN_DEVIATION_BPS || maxDeviationBps_ > MAX_DEVIATION_BPS) revert GuardTooHigh();
         maxDeviationBps = maxDeviationBps_;
         maxTicketPrice = maxTicketPrice_;
         reinvestCap = reinvestCap_;
+        if (player_ == address(this)) revert InvalidRecipient();
+        player = player_;
     }
 
     /// @dev Renouncing ownership would lock every withdrawal forever: disabled.
@@ -234,11 +259,19 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
         emit KeeperSet(keeper_);
     }
 
+    /// @notice Sets the wallet that receives the ticket budget and plays in its own name.
+    ///         address(0) = the vault buys the tickets itself.
+    function setPlayer(address player_) external onlyOwner {
+        if (player_ == address(this)) revert InvalidRecipient();
+        player = player_;
+        emit PlayerSet(player_);
+    }
+
     /// @notice Guards: optional absolute floor price (0 = none), maximum ticket price, and the
     ///         maximum distance below the reference price accepted for a sale.
     function setGuards(uint256 minWavaxPerP33_, uint256 maxTicketPrice_, uint16 maxDeviationBps_) external onlyOwner {
         if (minWavaxPerP33_ > MAX_FLOOR) revert GuardTooHigh();
-        if (maxDeviationBps_ == 0 || maxDeviationBps_ > MAX_DEVIATION_BPS) revert GuardTooHigh();
+        if (maxDeviationBps_ < MIN_DEVIATION_BPS || maxDeviationBps_ > MAX_DEVIATION_BPS) revert GuardTooHigh();
         minWavaxPerP33 = minWavaxPerP33_;
         maxTicketPrice = maxTicketPrice_;
         maxDeviationBps = maxDeviationBps_;
@@ -246,7 +279,7 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
     }
 
     /// @notice Changes the swap pool (if the liquidity migrates). Must be a p33/WAVAX pool.
-    function setPool(address pool_) external onlyOwner {
+    function setPool(address pool_) external onlyOwner nonReentrant {
         _setPool(pool_);
     }
 
@@ -262,6 +295,63 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
         if (to == address(0) || to == address(this)) revert InvalidRecipient();
         IERC20(token_).safeTransfer(to, amount);
         emit Rescued(token_, to, amount);
+    }
+
+    /**
+     * @notice Makes the vault call any contract, on the owner's order. This is what lets the
+     *         owner collect whatever the vault earns as a player (reward tokens to claim, NFTs
+     *         to move out), in any form the lottery may choose later.
+     *
+     * Owner only: the keeper has no access to it. p33 and WAVAX cannot be targeted: they have
+     * their own exits (withdraw, withdrawWavax), and a direct call would let the vault use an
+     * allowance somebody granted it by mistake.
+     */
+    function execute(address target, uint256 value, bytes calldata data)
+        external
+        payable
+        onlyOwner
+        nonReentrant
+        returns (bytes memory result)
+    {
+        if (target == address(0) || target == address(this)) revert InvalidRecipient();
+        if (target == address(p33) || target == address(wavax)) revert ProtectedToken();
+        // A call with data to an address without code would "succeed" while doing nothing.
+        if (data.length > 0 && target.code.length == 0) revert NotAContract();
+        bool ok;
+        (ok, result) = target.call{value: value}(data);
+        if (!ok) {
+            assembly {
+                revert(add(result, 32), mload(result))
+            }
+        }
+        // If the call moved WAVAX out, keep the budget consistent with the balance.
+        uint256 bal = wavax.balanceOf(address(this));
+        if (ticketBudget > bal) ticketBudget = bal;
+        emit Executed(target, value, data);
+    }
+
+    /// @dev Native AVAX can be received (a reward, a refund) and sent out with execute().
+    receive() external payable {}
+
+    // The vault accepts NFTs sent with the "safe" transfer functions.
+    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
+        return 0x150b7a02;
+    }
+
+    function onERC1155Received(address, address, uint256, uint256, bytes calldata) external pure returns (bytes4) {
+        return 0xf23a6e61;
+    }
+
+    function onERC1155BatchReceived(address, address, uint256[] calldata, uint256[] calldata, bytes calldata)
+        external
+        pure
+        returns (bytes4)
+    {
+        return 0xbc197c81;
+    }
+
+    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+        return interfaceId == 0x01ffc9a7 || interfaceId == 0x150b7a02 || interfaceId == 0x4e2312e0;
     }
 
     // ─────────────────────────────── Views ──────────────────────────────────
@@ -293,14 +383,16 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
 
     /// @notice WAVAX held outside the ticket budget (winnings not played again).
     function winnings() external view returns (uint256) {
-        return wavax.balanceOf(address(this)) - ticketBudget;
+        uint256 bal = wavax.balanceOf(address(this));
+        return bal > ticketBudget ? bal - ticketBudget : 0;
     }
 
     // ─────────────────────────────── Keeper ─────────────────────────────────
 
     /**
      * @notice The whole cycle in one transaction: claims and collects the winnings, sells the
-     *         yield, buys the tickets.
+     *         yield, then buys the tickets, or sends the budget to the player's wallet if one
+     *         is set.
      *
      * Each step is tolerant: if one of them cannot be done (price below the floor,
      * draw closed, lottery paused, nothing to claim), it is skipped and the others
@@ -329,11 +421,16 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
         collected = _collect();
 
         if (harvestAmount > 0) {
-            uint256 available = harvestable();
-            if (harvestAmount > available) harvestAmount = available;
-            harvested = _harvest(harvestAmount, minOut, false);
+            // p33 is an external contract too: if its conversion reverts, the sale is skipped.
+            try this.harvestable() returns (uint256 available) {
+                if (harvestAmount > available) harvestAmount = available;
+                harvested = _harvest(harvestAmount, minOut, false);
+            } catch {}
         }
-        ticketsBought = _buy(maxTickets, false);
+        // Every pass moves the reference towards the market, whether or not something was sold.
+        _refreshReference();
+        if (player != address(0)) _payout();
+        else ticketsBought = _buy(maxTickets, false);
     }
 
     /**
@@ -346,6 +443,7 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
         uint256 available = harvestable();
         if (amountIn > available) revert ExceedsHarvestable(amountIn, available);
         out = _harvest(amountIn, minOut, true);
+        _refreshReference();
     }
 
     /**
@@ -383,12 +481,24 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
     function _harvest(uint256 amountIn, uint256 minOut, bool strict) internal returns (uint256 out) {
         if (amountIn == 0) return 0;
 
+        // A reference written by a pass is only sold against once it is old enough: it cannot
+        // be set and used within the same transaction, block or hour.
+        if (block.timestamp - refTime < MIN_REF_AGE) {
+            if (strict) revert ReferenceTooRecent();
+            return 0;
+        }
+
         // The stricter of the caller's minimum and the vault's own floor prevails.
-        uint24 currentId = pool.getActiveId();
-        uint256 floorOut = Math.mulDiv(amountIn, floorPrice(), 1e18);
+        uint256 floor;
+        try this.floorPrice() returns (uint256 f) {
+            floor = f;
+        } catch {
+            if (strict) revert PoolUnavailable();
+            return 0;
+        }
+        uint256 floorOut = Math.mulDiv(amountIn, floor, 1e18);
         if (minOut < floorOut) minOut = floorOut;
 
-        bool done = true;
         if (strict) {
             out = _swap(amountIn, minOut);
         } else {
@@ -397,23 +507,33 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
             try this.swapForCycle(amountIn, minOut) returns (uint256 o) {
                 out = o;
             } catch {
-                done = false;
+                return 0;
             }
         }
-
-        // The reference follows the market from one pass to the next, whether or not the sale
-        // went through: after a real move beyond the tolerance, the next pass sells again.
-        if (block.timestamp - refTime >= MIN_REF_AGE) _setReference(currentId);
-        if (!done) return 0;
 
         ticketBudget += out;
         emit Harvested(amountIn, out);
     }
 
-    function _setReference(uint24 id) internal {
-        refId = id;
+    /// @dev Moves the reference towards the pool's current bin, by at most the tolerated
+    ///      deviation, and at most once per MIN_REF_AGE. Called after the sale of a pass, so a
+    ///      pass never sells against a reference it has just written.
+    function _refreshReference() internal {
+        if (block.timestamp - refTime < MIN_REF_AGE) return;
+        uint256 id;
+        try pool.getActiveId() returns (uint24 active) {
+            id = active;
+        } catch {
+            return;
+        }
+        uint256 maxBins = uint256(maxDeviationBps) / binStep;
+        if (maxBins == 0) maxBins = 1;
+        uint256 ref = refId;
+        if (id > ref + maxBins) id = ref + maxBins;
+        else if (id + maxBins < ref) id = ref - maxBins;
+        refId = uint24(id);
         refTime = uint40(block.timestamp);
-        emit ReferenceUpdated(id);
+        emit ReferenceUpdated(uint24(id));
     }
 
     /// @dev Reserved for the vault itself (see _harvest). Does nothing other than a bounded swap.
@@ -438,12 +558,35 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
         if (x == address(p33) && y == address(wavax)) p33IsX = true;
         else if (x == address(wavax) && y == address(p33)) p33IsX = false;
         else revert WrongPool();
+        uint16 step = IDlmmPool(pool_).getBinStep();
+        if (step == 0) revert WrongPool();
         pool = IDlmmPool(pool_);
+        binStep = step;
         emit PoolSet(pool_);
-        _setReference(IDlmmPool(pool_).getActiveId());
+        // Set by the owner (creation or pool change): usable at once, and the first pass will
+        // start moving it towards the market.
+        refId = IDlmmPool(pool_).getActiveId();
+        refTime = 0;
+        emit ReferenceUpdated(refId);
+    }
+
+    /// @dev Player mode: the whole ticket budget goes to the player's wallet.
+    function _payout() internal {
+        _clampBudget();
+        uint256 amount = ticketBudget;
+        if (amount == 0) return;
+        ticketBudget = 0;
+        wavax.safeTransfer(player, amount);
+        emit PaidOut(player, amount);
     }
 
     function _buy(uint256 maxTickets, bool strict) internal returns (uint256 n) {
+        // In player mode the budget belongs to the player's wallet: the vault does not spend it.
+        if (player != address(0)) {
+            if (strict) revert PlayerMode();
+            return 0;
+        }
+        _clampBudget();
         // The lottery is an external contract: in tolerant mode, none of its failures may
         // block the rest of the cycle, not even a reverting view.
         uint256 price;
@@ -496,7 +639,15 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
         emit TicketsBought(drawId, n, spent);
     }
 
+    /// @dev The budget can never exceed the WAVAX actually held (it could after an allowance
+    ///      granted through execute() was used by a third party).
+    function _clampBudget() internal {
+        uint256 bal = wavax.balanceOf(address(this));
+        if (ticketBudget > bal) ticketBudget = bal;
+    }
+
     function _collect() internal returns (uint256 received) {
+        _clampBudget();
         try lottery.claimable(address(this)) returns (uint256 pending) {
             if (pending == 0) return 0;
         } catch {
@@ -508,7 +659,9 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
         }
         uint256 afterBal = wavax.balanceOf(address(this));
         received = afterBal > before ? afterBal - before : 0;
-        uint256 reinvested = received < reinvestCap ? received : reinvestCap;
+        // Winnings are only played again when the vault plays itself: in player mode the budget
+        // leaves for the player's wallet, and winnings must stay under the owner's control.
+        uint256 reinvested = player != address(0) ? 0 : (received < reinvestCap ? received : reinvestCap);
         ticketBudget += reinvested;
         emit WinningsCollected(received, reinvested);
     }

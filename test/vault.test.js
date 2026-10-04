@@ -4,6 +4,7 @@ const { ethers } = require("ethers");
 const { setup, expectRevert, sel, E } = require("./helpers");
 const lib = require("../keeper/lib");
 const { runVault, makeContext } = require("../keeper/index");
+const { runPlayer, ticketsToBuy, clean } = require("../keeper/player");
 
 const quiet = { log: () => {} };
 
@@ -18,7 +19,7 @@ test("factory: the caller is the owner, the factory has no rights", async () => 
   assert.equal(await s.vault.referencePrice(), E("0.017") - 1n, "reference taken from the pool at creation (1 wei of fixed-point rounding)");
   assert.equal(await s.vault.maxTicketPrice(), E("0.5"));
 
-  await (await s.factory.connect(s.player).createVault(1000, E("0.5"), E("1"))).wait();
+  await (await s.factory.connect(s.player).createVault(1000, E("0.5"), E("1"), ethers.ZeroAddress, ethers.ZeroAddress)).wait();
   const v2 = (await s.factory.vaultsOf(s.player.address))[0];
   assert.notEqual(v2, s.vault.target);
   assert.equal(await new ethers.Contract(v2, s.vault.interface, s.provider).owner(), s.player.address);
@@ -54,6 +55,9 @@ test("harvest: only the surplus is sold, the principal stays covered", async () 
 test("harvest: automatic reference price, no manual floor to maintain", async () => {
   const s = await setup();
   const k = s.vault.connect(s.keeper);
+  const MAX = ethers.MaxUint256;
+  const SIX_HOURS = 6n * 3600n + 60n;
+  const near = (x, target) => x > (target * 9999n) / 10000n && x < (target * 10001n) / 10000n;
   await s.depositP33(E("1000"));
   await (await s.p33.setRatio(E("1.02"))).wait();
   const h = await s.vault.harvestable();
@@ -65,30 +69,43 @@ test("harvest: automatic reference price, no manual floor to maintain", async ()
   assert.equal(await s.p33.balanceOf(s.pool.target), 0n, "the p33 did not stay in the pool");
   assert.equal(await s.vault.ticketBudget(), 0n);
 
-  // same pass through cycle(): skipped, and the reference does not move yet (too recent)
-  await (await k.cycle(ethers.MaxUint256, 0, 0, [], [], [], [])).wait();
+  // same pass through cycle(): the sale is skipped, and the reference moves towards the
+  // market by one notch only (40 bins of 0.25%, about 10%), not all the way to 0.010
+  await (await k.cycle(MAX, 0, 0, [], [], [], [])).wait();
   assert.equal(await s.vault.harvestable(), h);
-  assert.equal(await s.vault.referencePrice(), E("0.017") - 1n);
+  const notch1 = await s.vault.referencePrice();
+  assert.ok(near(notch1, E("0.015384")), `one notch down: ${notch1}`);
 
-  // an hour later the price is still there: this pass is skipped too, but the reference follows
-  await s.warp(3700n);
-  await (await k.cycle(ethers.MaxUint256, 0, 0, [], [], [], [])).wait();
-  assert.equal(await s.vault.harvestable(), h, "still not sold on this pass");
-  assert.equal(await s.vault.referencePrice(), E("0.010") - 1n, "reference updated to the market");
+  // a reference written by a pass cannot be sold against, nor moved again, before 6 hours
+  await expectRevert(k.harvest(h, 0), sel("ReferenceTooRecent()"));
+  await (await s.pool.setRate(E("0.0140"))).wait(); // within 10% of the new reference
+  await (await k.cycle(MAX, 0, 0, [], [], [], [])).wait();
+  assert.equal(await s.vault.harvestable(), h, "not sold in the hours following a reference update");
+  assert.equal(await s.vault.referencePrice(), notch1, "not moved again either");
+  await (await s.pool.setRate(E("0.010"))).wait();
 
-  // next pass: the market has settled at the new price, the sale goes through without anyone touching a setting
-  await (await k.cycle(ethers.MaxUint256, 0, 0, [], [], [], [])).wait();
+  // the price stays at 0.010: pass after pass, every 6 hours, the reference comes down to the
+  // market and the sale ends up going through without anyone touching a setting
+  let passes = 0;
+  while ((await s.vault.harvestable()) > 0n && passes < 10) {
+    await s.warp(SIX_HOURS);
+    await (await k.cycle(MAX, 0, 0, [], [], [], [])).wait();
+    passes++;
+  }
+  assert.equal(passes, 5, "4 more notches, then the sale");
   assert.equal(await s.vault.harvestable(), 0n);
   assert.equal(await s.vault.ticketBudget(), (h * E("0.010")) / E("1"));
 
   // a price moving up is never a problem
   await (await s.p33.setRatio(E("1.04"))).wait();
   await (await s.pool.setRate(E("0.030"))).wait();
+  await s.warp(SIX_HOURS);
   await (await k.harvest(await s.vault.harvestable(), 0)).wait();
 
   // the optional absolute floor still applies on top when the owner sets one
   await (await s.p33.setRatio(E("1.06"))).wait();
   await (await s.vault.setGuards(E("0.05"), E("0.5"), 1000)).wait();
+  await s.warp(SIX_HOURS);
   await expectRevert(k.harvest(await s.vault.harvestable(), 0), sel("Slippage(uint256,uint256)"));
   await expectRevert(s.vault.setGuards(0, E("0.5"), 0), sel("GuardTooHigh()"));
   await expectRevert(s.vault.setGuards(0, E("0.5"), 6000), sel("GuardTooHigh()"));
@@ -334,7 +351,7 @@ test("cycle: a single transaction collects the winnings, sells the yield and buy
   // 1st cycle: sale + purchase, nothing to claim
   let rc = await (await k.cycle(MAX, 0, 50, [], [], [], [])).wait();
   const names = (r) => r.logs.map((l) => { try { return s.vault.interface.parseLog(l)?.name; } catch { return null; } }).filter(Boolean);
-  assert.deepEqual(names(rc), ["Harvested", "TicketsBought"]);
+  assert.deepEqual(names(rc), ["Harvested", "ReferenceUpdated", "TicketsBought"]);
   const mine = await s.lottery.getOwnerTickets(s.vault.target);
   assert.equal(mine.length, 4);
 
@@ -348,14 +365,14 @@ test("cycle: a single transaction collects the winnings, sells the yield and buy
   await (await s.lottery.setResult(draw1, [...main6, seventh], t1.compNumbers.slice(0, 2).map(Number), pools)).wait();
   const tree = lib.buildTree([{ id: mine[0], owner: s.vault.target, rank: 1, amount: E("3") }]);
   await (await s.lottery.setMerkleRoot(draw1, tree.root)).wait();
-  await s.warp(16n * 60n);
+  await s.warp(6n * 3600n);
   await s.openDraw(3600n);
   await (await s.p33.setRatio(E("1.02"))).wait();
 
   // 2nd cycle: claim + collection + sale + purchase, still a single transaction
   const p = lib.proofsFor(tree, s.vault.target)[0];
   rc = await (await k.cycle(MAX, 0, 50, [p.id], [p.rank], [p.amount], [p.proof])).wait();
-  assert.deepEqual(names(rc), ["PrizesClaimed", "WinningsCollected", "ReferenceUpdated", "Harvested", "TicketsBought"]);
+  assert.deepEqual(names(rc), ["PrizesClaimed", "WinningsCollected", "Harvested", "ReferenceUpdated", "TicketsBought"]);
   assert.equal(await s.vault.winnings(), E("2.91"), "3 WAVAX minus the 3% fee, set aside");
   assert.ok((await s.lottery.getOwnerTickets(s.vault.target)).length > 4);
   assert.ok((await s.p33.convertToAssets(await s.p33.balanceOf(s.vault.target))) >= E("5000"), "principal intact");
@@ -390,6 +407,7 @@ test("cycle: an impossible step is skipped without blocking the others", async (
 
   // price recovered, lottery paused: the sale goes through, the purchase waits
   await (await s.pool.setRate(E("0.017"))).wait();
+  await s.warp(6n * 3600n + 60n);
   await (await s.lottery.setPaused(true)).wait();
   const before = await s.vault.ticketBudget();
   await (await k.cycle(MAX, 0, 50, [], [], [], [])).wait();
@@ -490,4 +508,264 @@ test("factory registry: isVault is true only for vaults it created", async () =>
   assert.equal(await s.factory.isVault(s.vault.target), true);
   assert.equal(await s.factory.isVault(s.stranger.address), false);
   assert.equal(await s.factory.isVault(s.pool.target), false);
+});
+
+test("execute: the owner can make the vault claim rewards and move NFTs out; nobody else can", async () => {
+  const s = await setup();
+  const { deploy } = require("./helpers");
+  const token = await deploy("MockERC20", s.deployer, "Reward", "RWD");
+  const rewards = await deploy("MockRewards", s.deployer, token.target);
+  const v = s.vault.target;
+
+  // an NFT sent with a safe transfer is accepted, then sent on to the owner
+  await (await rewards.airdropNft(v)).wait();
+  assert.equal(await rewards.ownerOf(1n), v);
+  const moveNft = rewards.interface.encodeFunctionData("transferFrom", [v, s.owner.address, 1n]);
+  await expectRevert(s.vault.connect(s.keeper).execute(rewards.target, 0, moveNft), sel("OwnableUnauthorizedAccount(address)"));
+  await expectRevert(s.vault.connect(s.stranger).execute(rewards.target, 0, moveNft), sel("OwnableUnauthorizedAccount(address)"));
+  await (await s.vault.execute(rewards.target, 0, moveNft)).wait();
+  assert.equal(await rewards.ownerOf(1n), s.owner.address);
+
+  // a reward only the player's address can claim: claimed by the vault, then taken out
+  await (await s.vault.execute(rewards.target, 0, rewards.interface.encodeFunctionData("claim"))).wait();
+  assert.equal(await token.balanceOf(v), E("100"));
+  await (await s.vault.rescue(token.target, E("100"), s.owner.address)).wait();
+  assert.equal(await token.balanceOf(s.owner.address), E("100"));
+
+  // a failing call reverts with the callee's own error; the vault cannot call itself
+  await expectRevert(s.vault.execute(rewards.target, 0, moveNft), sel("ERC721InsufficientApproval(address,uint256)"));
+  await expectRevert(s.vault.execute(v, 0, "0x"), sel("InvalidRecipient()"));
+
+  // native AVAX can come in and be sent out
+  await (await s.owner.sendTransaction({ to: v, value: E("1") })).wait();
+  const before = await s.provider.getBalance(s.stranger.address);
+  await (await s.vault.execute(s.stranger.address, E("1"), "0x")).wait();
+  assert.equal((await s.provider.getBalance(s.stranger.address)) - before, E("1"));
+
+  // p33 and WAVAX cannot be targeted: somebody who approved p33 to a vault that is not theirs
+  // (a trapped link) cannot have it pulled by that vault's owner
+  await (await s.p33.mint(s.stranger.address, E("100"))).wait();
+  await (await s.p33.connect(s.stranger).approve(v, E("100"))).wait();
+  const pull = s.p33.interface.encodeFunctionData("transferFrom", [s.stranger.address, s.owner.address, E("100")]);
+  await expectRevert(s.vault.execute(s.p33.target, 0, pull), sel("ProtectedToken()"));
+  const out = s.wavax.interface.encodeFunctionData("transfer", [s.owner.address, 1n]);
+  await expectRevert(s.vault.execute(s.wavax.target, 0, out), sel("ProtectedToken()"));
+  assert.equal(await s.p33.balanceOf(s.stranger.address), E("100"));
+});
+
+test("player wallet: the vault sells the yield and pays the budget to the player, who buys in their own name", async () => {
+  const s = await setup({ playerMode: true });
+  const k = s.vault.connect(s.player); // the player wallet is also the vault's keeper
+  const MAX = ethers.MaxUint256;
+  assert.equal(await s.vault.player(), s.player.address);
+  await s.depositP33(E("5000"));
+  await (await s.p33.setRatio(E("1.01"))).wait();
+  await s.openDraw(3600n);
+  const h = await s.vault.harvestable();
+
+  const rc = await (await k.cycle(MAX, 0, 50, [], [], [], [])).wait();
+  const names = rc.logs.map((l) => { try { return s.vault.interface.parseLog(l)?.name; } catch { return null; } }).filter(Boolean);
+  assert.deepEqual(names, ["Harvested", "ReferenceUpdated", "PaidOut"]);
+  const paid = (h * E("0.017")) / E("1");
+  assert.equal(await s.wavax.balanceOf(s.player.address), paid, "the whole budget went to the player wallet");
+  assert.equal(await s.vault.ticketBudget(), 0n);
+  assert.equal(await s.wavax.balanceOf(s.vault.target), 0n);
+  assert.equal((await s.lottery.getOwnerTickets(s.vault.target)).length, 0, "the vault buys nothing itself");
+  assert.ok((await s.p33.convertToAssets(await s.p33.balanceOf(s.vault.target))) >= E("5000"), "principal intact");
+
+  // the vault refuses to buy in this mode, and the keeper cannot redirect the payout
+  await expectRevert(k.buyTickets(1), sel("PlayerMode()"));
+  await expectRevert(k.setPlayer(s.stranger.address), sel("OwnableUnauthorizedAccount(address)"));
+  await expectRevert(s.vault.setPlayer(s.vault.target), sel("InvalidRecipient()"));
+  await expectRevert(k.withdrawWavax(1, s.player.address), sel("OwnableUnauthorizedAccount(address)"));
+  await expectRevert(k.withdraw(1, s.player.address), sel("OwnableUnauthorizedAccount(address)"));
+
+  // a budget added by the owner follows the same path
+  await (await s.wavax.mint(s.owner.address, E("1"))).wait();
+  await (await s.wavax.connect(s.owner).approve(s.vault.target, E("1"))).wait();
+  await (await s.vault.fundBudget(E("1"))).wait();
+  await (await k.cycle(0, 0, 0, [], [], [], [])).wait();
+  assert.equal(await s.wavax.balanceOf(s.player.address), paid + E("1"));
+
+  // winnings set aside in the vault are never paid out: only the budget is
+  await (await s.wavax.mint(s.vault.target, E("3"))).wait();
+  await (await k.cycle(0, 0, 0, [], [], [], [])).wait();
+  assert.equal(await s.wavax.balanceOf(s.player.address), paid + E("1"));
+  assert.equal(await s.vault.winnings(), E("3"));
+
+  // back to the mode where the vault plays itself
+  await (await s.vault.setPlayer(ethers.ZeroAddress)).wait();
+  await (await s.wavax.mint(s.owner.address, E("1"))).wait();
+  await (await s.wavax.connect(s.owner).approve(s.vault.target, E("1"))).wait();
+  await (await s.vault.fundBudget(E("1"))).wait();
+  await (await k.cycle(0, 0, 50, [], [], [], [])).wait();
+  assert.equal((await s.lottery.getOwnerTickets(s.vault.target)).length, 5);
+});
+
+test("player bot: spreads the tickets over the draws left before the next sale", () => {
+  const thu = 1767225600n; // Thursday 2026-01-01 00:00 UTC
+  const fri6 = thu + 2n * 86400n + 6n * 3600n; // Saturday 06:00: first draw after the weekly sale
+  // 14 draws from Saturday 06:00 to the next Friday 18:00
+  assert.equal(ticketsToBuy({ affordable: 28n, mine: 0n, scheduledTime: fri6 }), 2n);
+  assert.equal(ticketsToBuy({ affordable: 26n, mine: 2n, scheduledTime: fri6 }), 0n, "second run before the same draw: nothing more");
+  assert.equal(ticketsToBuy({ affordable: 26n, mine: 0n, scheduledTime: fri6 + 43200n }), 2n, "next draw: 13 draws left");
+  assert.equal(ticketsToBuy({ affordable: 5n, mine: 0n, scheduledTime: fri6 }), 1n, "at least one ticket per draw while funds last");
+  assert.equal(ticketsToBuy({ affordable: 0n, mine: 0n, scheduledTime: fri6 }), 0n);
+  assert.equal(ticketsToBuy({ affordable: 3n, mine: 0n, scheduledTime: thu + 604800n + 86400n + 18n * 3600n }), 3n, "last draw before the sale: everything");
+  assert.equal(ticketsToBuy({ affordable: 5000n, mine: 0n, scheduledTime: fri6 }), 50n, "50 per transaction at most");
+  // public logs: anything that looks like an address, a hash or call data is masked
+  assert.equal(clean("execution reverted: 0x1E95De5A036767A44e7974151852ACce4223e1E1 is not allowed"), "execution reverted: 0x… is not allowed");
+  // fixed number of tickets per draw
+  assert.equal(ticketsToBuy({ affordable: 10n, mine: 0n, scheduledTime: fri6, fixed: 3n }), 3n);
+  assert.equal(ticketsToBuy({ affordable: 10n, mine: 1n, scheduledTime: fri6, fixed: 3n }), 2n);
+  assert.equal(ticketsToBuy({ affordable: 1n, mine: 0n, scheduledTime: fri6, fixed: 3n }), 1n);
+});
+
+test("player bot: one pass sells, buys from the player wallet, claims its prizes, and nothing is done twice", async () => {
+  const s = await setup({ playerMode: true });
+  const logs = [];
+  const cfg = { log: (m) => logs.push(m), ticketsPerDraw: 2n };
+  const run = () => runPlayer({ signer: s.player, vaultAddress: s.vault.target, cfg });
+  await s.depositP33(E("5000"));
+  await (await s.p33.setRatio(E("1.01"))).wait(); // ~49.5 p33 of yield -> ~0.84 WAVAX
+
+  // move into the sale window (Saturday), with a draw open
+  const t = await s.now();
+  const target = t - (t % 604800n) + 604800n + 2n * 86400n;
+  await (await s.lottery.createDraw(target + 43200n)).wait();
+  const draw1 = await s.lottery.currentDrawId();
+  await s.warp(target - t);
+
+  let r = await run();
+  assert.deepEqual(r.problems, []);
+  assert.ok(r.received > E("0.84") && r.received < E("0.85"), `received ${r.received}`);
+  assert.equal(r.bought, 2n);
+  let mine = await s.lottery.getOwnerTickets(s.player.address);
+  assert.equal(mine.length, 2, "tickets held by the player wallet itself");
+  assert.equal((await s.lottery.getTicket(mine[0])).owner, s.player.address);
+  assert.equal(await s.vault.ticketBudget(), 0n);
+  assert.equal(await s.wavax.allowance(s.player.address, s.lottery.target), 0n, "exact approval, nothing left");
+  assert.ok((await s.p33.convertToAssets(await s.p33.balanceOf(s.vault.target))) >= E("5000"), "principal intact");
+
+  // second run before the same draw: nothing sold, nothing bought
+  r = await run();
+  assert.deepEqual(r.problems, []);
+  assert.equal(r.bought, 0n);
+  assert.equal(r.received, 0n);
+  assert.equal((await s.lottery.getOwnerTickets(s.player.address)).length, 2);
+
+  // the logs can be public: no address in them
+  const all = logs.join("\n").toLowerCase();
+  for (const a of [s.player.address, s.vault.target, s.owner.address]) assert.ok(!all.includes(a.toLowerCase().slice(2, 12)), "no address in the logs");
+
+  // ticket 1 wins 30 WAVAX at rank 1
+  const t1 = await s.lottery.getTicket(mine[0]);
+  const main6 = t1.mainNumbers.slice(0, 6).map(Number);
+  const comp2 = t1.compNumbers.slice(0, 2).map(Number);
+  const seventh = [...Array(24).keys()].map((i) => i + 1).find((n) => !main6.includes(n));
+  const pools = Array(12).fill(0n);
+  pools[0] = E("30");
+  await s.warp(43200n + 60n);
+  await (await s.lottery.setResult(draw1, [...main6, seventh], comp2, pools)).wait();
+  const tickets = await Promise.all(mine.map((id) => s.lottery.getTicket(id)));
+  const winners = lib.computeWinners(
+    { winningMain: [...main6, seventh], winningComp: comp2, rankPools: pools, isRun2: false },
+    tickets.map((x) => ({ id: x.id, owner: x.owner, mainNumbers: x.mainNumbers.map(Number), compNumbers: x.compNumbers.map(Number), isSystemPlay: x.isSystemPlay, systemMainCount: x.systemMainCount, systemCompCount: x.systemCompCount }))
+  );
+  await (await s.lottery.setMerkleRoot(draw1, lib.buildTree(winners).root)).wait();
+  await s.warp(16n * 60n);
+  await (await s.lottery.createDraw((await s.now()) + 43200n)).wait();
+
+  // next pass: prize claimed and collected by the player wallet, tickets bought for the new
+  // draw, and the prize money above the working balance (30 tickets) sent to the vault, where
+  // only the owner can withdraw it
+  const gross = winners.filter((w) => w.owner === s.player.address).reduce((a, w) => a + w.amount, 0n);
+  assert.ok(gross >= E("30"));
+  r = await run();
+  assert.deepEqual(r.problems, []);
+  assert.equal(r.claimed, winners.length);
+  assert.equal(r.collected, (gross * 97n) / 100n, "97% after the lottery's fee");
+  assert.equal(r.bought, 2n);
+  assert.equal(await s.wavax.balanceOf(s.player.address), 28n * E("0.19"), "working balance of 30 tickets kept, 2 of them just bought: the prize is not spent on tickets");
+  assert.ok(r.swept > E("23"), `swept ${r.swept}`);
+  assert.equal(await s.vault.winnings(), r.swept, "in the vault, outside the ticket budget");
+  assert.equal(await s.vault.ticketBudget(), 0n);
+  await expectRevert(s.vault.connect(s.player).withdrawWavax(r.swept, s.player.address), sel("OwnableUnauthorizedAccount(address)"));
+  // a later pass does not pay it back out to the player
+  await s.warp(21n * 3600n);
+  await run();
+  assert.equal(await s.vault.winnings(), r.swept);
+  await (await s.vault.withdrawWavax(r.swept, s.owner.address)).wait();
+  assert.equal(await s.wavax.balanceOf(s.owner.address), r.swept);
+
+  // nothing is claimed twice
+  r = await run();
+  assert.deepEqual(r.problems, []);
+  assert.equal(r.claimed, 0);
+  assert.equal(r.collected, 0n);
+});
+
+test("player bot: pays its own gas from the WAVAX it holds, refuses a wallet that is not the vault's player", async () => {
+  const s = await setup({ playerMode: true });
+  const cfg = { log: () => {} };
+  await expectRevert(runPlayer({ signer: s.stranger, vaultAddress: s.vault.target, cfg }), "not the player");
+
+  // gas below the threshold: part of the WAVAX is unwrapped
+  await (await s.wavax.mint(s.player.address, E("2"))).wait();
+  const gas = await s.provider.getBalance(s.player.address);
+  const r = await runPlayer({ signer: s.player, vaultAddress: s.vault.target, cfg: { ...cfg, minGas: gas + E("1"), gasTopUp: gas + E("1.5") } });
+  assert.deepEqual(r.problems, []);
+  assert.ok((await s.provider.getBalance(s.player.address)) > gas + E("1.4"));
+  assert.ok((await s.wavax.balanceOf(s.player.address)) <= E("0.5"));
+
+  // no WAVAX to convert: reported as a problem, so that the scheduler raises an alert
+  const r2 = await runPlayer({ signer: s.player, vaultAddress: s.vault.target, cfg: { ...cfg, minGas: gas + E("100"), gasTopUp: gas + E("200") } });
+  assert.equal(r2.lowGas, true);
+  assert.ok(r2.problems.some((p) => p.includes("gas too low")));
+});
+
+test("keeper: when the price is too far below the reference, the pass is still sent so the reference follows", async () => {
+  const s = await setup();
+  await s.depositP33(E("5000"));
+  await (await s.p33.setRatio(E("1.01"))).wait();
+  const t = await s.now();
+  await s.warp(t - (t % 604800n) + 604800n + 2n * 86400n - t); // Saturday: sale window
+  await (await s.pool.setRate(E("0.010"))).wait();
+  const h = await s.vault.harvestable();
+  const ref = await s.vault.referencePrice();
+
+  const logs = [];
+  const ctx = await makeContext({ signer: s.keeper, lotteryAddress: s.lottery.target, state: {}, cfg: { log: (m) => logs.push(m) } });
+  await runVault(ctx, s.vault.target);
+  assert.ok(logs.some((l) => l.includes("postponed")), logs.join("\n"));
+  assert.equal(await s.vault.harvestable(), h, "nothing sold");
+  assert.ok((await s.vault.referencePrice()) < ref, "the reference moved towards the market");
+  assert.ok((await s.vault.refTime()) > 0n);
+});
+
+test("player bot: a prize whose proof cannot be rebuilt is reported, nothing is sent", async () => {
+  const s = await setup({ playerMode: true });
+  const cfg = { log: () => {}, ticketsPerDraw: 1n };
+  await (await s.wavax.mint(s.player.address, E("1"))).wait();
+  const draw1 = await s.openDraw(3600n);
+  let r = await runPlayer({ signer: s.player, vaultAddress: s.vault.target, cfg });
+  assert.equal(r.bought, 1n);
+
+  const [id] = await s.lottery.getOwnerTickets(s.player.address);
+  const t1 = await s.lottery.getTicket(id);
+  const main6 = t1.mainNumbers.slice(0, 6).map(Number);
+  const seventh = [...Array(24).keys()].map((i) => i + 1).find((n) => !main6.includes(n));
+  const pools = Array(12).fill(0n);
+  pools[0] = E("5");
+  await s.warp(3700n);
+  await (await s.lottery.setResult(draw1, [...main6, seventh], t1.compNumbers.slice(0, 2).map(Number), pools)).wait();
+  // the lottery's tree gives this ticket another amount than the one the bot recomputes
+  const tree = lib.buildTree([{ id, owner: s.player.address, rank: 1, amount: E("4") }]);
+  await (await s.lottery.setMerkleRoot(draw1, tree.root)).wait();
+  await s.warp(16n * 60n);
+
+  r = await runPlayer({ signer: s.player, vaultAddress: s.vault.target, cfg });
+  assert.equal(r.claimed, 0);
+  assert.ok(r.problems.some((p) => p.includes("claim it by hand")), JSON.stringify(r.problems));
+  assert.equal(await s.lottery.ticketPrizeClaimed(id), false);
 });

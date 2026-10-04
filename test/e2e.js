@@ -18,7 +18,7 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   const provider = new ethers.BrowserProvider(gp, undefined, { cacheTimeout: -1 });
   const [deployer, user, keeper, stranger] = await Promise.all([0, 1, 2, 3].map((i) => provider.getSigner(i)));
 
-  const wavax = await deploy("MockERC20", deployer, "Wrapped AVAX", "WAVAX");
+  const wavax = await deploy("MockWAVAX", deployer);
   const p33 = await deploy("MockP33", deployer);
   const pool = await deploy("MockDlmmPool", deployer, p33.target, wavax.target);
   const lottery = await deploy("MockLottery", deployer, wavax.target, E("0.19"));
@@ -116,7 +116,7 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   await statusIs("Simulation terminée"); // aucun tirage ouvert : l'achat échoue, le reste passe
   assert.match(await page.textContent("#dryOut"), /Vente sur le pool24,9999 p33 → 0,424999 WAVAX/);
   assert.match(await page.textContent("#dryOut"), /Achat de ticketséchec.*Causeaucun tirage ouvert/);
-  assert.match(await page.textContent("#dryOut"), /Cycle en une transactionOK.*Retrait total2\s250 p33 et 0,42\d+ WAVAX récupérés/);
+  assert.match(await page.textContent("#dryOut"), /Cycle en une transactionOK.*Versement au wallet joueur0,424999 WAVAX.*Retrait total2\s250 p33 récupérés/);
   await (await lottery.createDraw(BigInt((await provider.getBlock("latest")).timestamp) + 86400n)).wait();
   const blockMid = await provider.getBlockNumber();
   await page.click("#dryBtn");
@@ -124,6 +124,7 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   const dry = await page.textContent("#dryOut");
   assert.match(dry, /Cours obtenu0,016999 WAVAX par p33/);
   assert.match(dry, /Achat de tickets2 ticket\(s\) à 0,19 WAVAX/);
+  assert.match(dry, /Versement au wallet joueur0,044999 WAVAX/);
   assert.equal(await provider.getBlockNumber(), blockMid, "la simulation n'envoie aucune transaction");
   assert.equal(await p33.balanceOf(user.address), E("2500"), "solde intact");
   await shot("1c-simulation");
@@ -135,14 +136,14 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   assert.equal(await factory.p33(), p33.target);
   assert.equal(await factory.lottery(), lottery.target);
   assert.equal(await factory.pool(), pool.target);
-  assert.equal(await factory.defaultKeeper(), ethers.ZeroAddress);
-  const initcode = (await new ethers.ContractFactory(art("P33LotteryVaultFactory").abi, art("P33LotteryVaultFactory").bytecode).getDeployTransaction(p33.target, wavax.target, lottery.target, pool.target, ethers.ZeroAddress)).data;
+  const initcode = (await new ethers.ContractFactory(art("P33LotteryVaultFactory").abi, art("P33LotteryVaultFactory").bytecode).getDeployTransaction(p33.target, wavax.target, lottery.target, pool.target)).data;
   assert.equal(factoryAddr, ethers.getCreate2Address("0x4e59b44847b379578588920cA78FbF26c0B4956C", ethers.id("p33-lottery-vault/v1"), ethers.keccak256(initcode)), "adresse déterministe");
   step("factory déployée depuis la page par un appel classique, sans robot");
 
   // 1. pas encore de vault -> formulaire de création pré-rempli
   assert.equal(await page.inputValue("#cMaxPrice"), "0.95");
   assert.equal(await page.isVisible("#cFloor"), false, "plus de prix plancher à saisir");
+  assert.equal(await page.inputValue("#cPlayer"), "", "wallet joueur facultatif");
   await shot("2-creation");
   step("formulaire de création");
 
@@ -156,6 +157,9 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   assert.equal(await vault.maxDeviationBps(), 1000n);
   assert.equal(await vault.minWavaxPerP33(), 0n);
   assert.equal(await vault.maxTicketPrice(), E("0.95"));
+  assert.equal(await vault.player(), ethers.ZeroAddress);
+  assert.equal(await vault.keeper(), ethers.ZeroAddress);
+  assert.equal(await page.isHidden("#playerBox"), true);
   step("vault créé au nom de l'utilisateur");
 
   // 3. dépôt (approve + deposit)
@@ -207,7 +211,7 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   step("essai à blanc : achat simulé avec un petit solde, message clair si le solde est trop faible");
 
   // 5 a bis. liens piégés : une factory ou un vault inconnus sont refusés avant toute signature
-  const fake = await deploy("P33LotteryVaultFactory", deployer, p33.target, wavax.target, lottery.target, pool.target, keeper.address);
+  const fake = await deploy("P33LotteryVaultFactory", deployer, p33.target, wavax.target, lottery.target, pool.target);
   const trap = await browser.newPage({ viewport: { width: 390, height: 844 }, locale: "fr-FR" });
   await trap.addInitScript(INIT, stranger.address.toLowerCase());
   await trap.goto(`${base}/?factory=${fake.target}`);
@@ -215,12 +219,24 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   await trap.waitForFunction(() => document.getElementById("status").textContent.includes("Factory non reconnue"), null, { timeout: 60000 });
   assert.equal(await trap.isHidden("#dash"), true);
   assert.equal(await trap.isHidden("#createCard"), true);
+  // le vrai code de factory, déployé à son adresse déterministe mais avec un autre pool
+  const pool2 = await deploy("MockDlmmPool", deployer, p33.target, wavax.target);
+  const fArt = art("P33LotteryVaultFactory");
+  const init2 = (await new ethers.ContractFactory(fArt.abi, fArt.bytecode).getDeployTransaction(p33.target, wavax.target, lottery.target, pool2.target)).data;
+  const PROXY = "0x4e59b44847b379578588920cA78FbF26c0B4956C", SALT = ethers.id("p33-lottery-vault/v1");
+  await (await deployer.sendTransaction({ to: PROXY, data: ethers.concat([SALT, init2]) })).wait();
+  const otherPoolFactory = ethers.getCreate2Address(PROXY, SALT, ethers.keccak256(init2));
+  assert.notEqual(await provider.getCode(otherPoolFactory), "0x");
+  await trap.goto(`${base}/?factory=${otherPoolFactory}`);
+  await trap.click("#walletList button");
+  await trap.waitForFunction(() => document.getElementById("status").textContent.includes("Factory non reconnue"), null, { timeout: 60000 });
+  assert.equal(await trap.isHidden("#createCard"), true);
   await trap.goto(`${base}/?vault=${pool.target}`);
   await trap.click("#walletList button");
   await trap.waitForFunction(() => document.getElementById("status").textContent.includes("Vault non reconnu"), null, { timeout: 60000 });
   assert.equal(await trap.isHidden("#dash"), true);
   await trap.close();
-  step("liens piégés refusés (fausse factory, faux vault)");
+  step("liens piégés refusés (fausse factory, factory avec un autre pool, faux vault)");
 
   // 5 bis. un autre wallet ouvre ce vault : lecture seule, retrait refusé par le contrat
   const other = await browser.newPage({ viewport: { width: 390, height: 844 }, locale: "fr-FR" });
@@ -229,11 +245,20 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   await other.goto(`${base}/?vault=${vaultAddr}`); // sans ?factory= : la page retrouve la factory par son adresse déterministe
   await other.click("#walletList button");
   await other.waitForSelector("#notOwner:not([hidden])");
-  await other.click("#withdrawAllBtn");
+  for (const id of ["depositBtn", "withdrawBtn", "withdrawAllBtn", "withdrawWavaxBtn", "guardsBtn", "playerBtn", "keeperBtn"]) {
+    assert.equal(await other.isHidden("#" + id), true, id + " masqué pour un non-propriétaire");
+  }
+  // même en forçant le bouton, aucune autorisation p33 ne part vers le vault d'un autre
+  await (await p33.mint(stranger.address, E("50"))).wait();
+  await other.fill("#amtP33", "10");
+  await other.evaluate(() => document.getElementById("depositBtn").click());
+  await other.waitForFunction(() => document.getElementById("status").textContent.includes("rien n'est envoyé"), null, { timeout: 60000 });
+  assert.equal(await p33.allowance(stranger.address, vaultAddr), 0n, "aucune autorisation accordée");
+  await other.evaluate(() => document.getElementById("withdrawAllBtn").click());
   await other.waitForFunction(() => document.getElementById("status").textContent.includes("Seul le propriétaire du vault peut faire ça."), null, { timeout: 60000 });
   assert.equal(await p33.balanceOf(vaultAddr) > 0n, true);
   await other.close();
-  step("un autre wallet ne peut rien retirer");
+  step("le vault d'un autre est en lecture seule : ni autorisation, ni dépôt, ni retrait");
 
   // 5 ter. le ticket du vault gagne : la page trouve le gain, le prouve et l'encaisse dans le cycle
   const [tid] = await lottery.getOwnerTickets(vaultAddr);
@@ -268,6 +293,37 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   assert.equal(await vault.reinvestCap(), E("1.9"), "plafond : 10 tickets au prix actuel");
   assert.equal(await vault.maxDeviationBps(), 1000n, "écart maximal conservé");
   step("réglages");
+
+  // 6 bis. wallet joueur : le vault lui verse son budget, il achète à son nom
+  await page.fill("#sPlayer", keeper.address);
+  await page.click("#playerBtn");
+  await statusIs("Changement de wallet joueur : fait.");
+  assert.equal(await vault.player(), keeper.address);
+  assert.equal(await vault.keeper(), keeper.address, "le wallet joueur est aussi le robot");
+  assert.equal(await page.isHidden("#playerBox"), false);
+  assert.match(await text("cycleHelp"), /verse le WAVAX au wallet joueur/);
+  await (await p33.setRatio(E("1.04"))).wait();
+  await provider.send("evm_increaseTime", [6 * 3600 + 60]);
+  await provider.send("evm_mine", []);
+  await connect();
+  await page.click("#cycleBtn");
+  await statusIs("Cycle : fait.");
+  const paid = await wavax.balanceOf(keeper.address);
+  assert.ok(paid > E("0.46") && paid < E("0.47"), `versé au wallet joueur : ${paid}`);
+  assert.equal(await vault.ticketBudget(), 0n);
+  assert.equal(await text("vBudget"), "0");
+  assert.match(await text("pWavax"), /^0,46\d* \(2 ticket\(s\)\)$/);
+  assert.equal((await lottery.getOwnerTickets(vaultAddr)).length, 1, "le vault n'achète plus lui-même");
+  await shot("4-wallet-joueur");
+  step("wallet joueur : budget versé, le vault n'achète plus");
+
+  // 6 ter. une factory mémorisée par une ancienne version de la page est ignorée
+  await page.evaluate(() => localStorage.setItem("p33vault.factory", "0x0000000000000000000000000000000000000001"));
+  await page.goto(url);
+  await page.click("#walletList button");
+  await page.waitForSelector("#dash:not([hidden])", { timeout: 60000 });
+  assert.equal(await text("vAddr"), vaultAddr, "la factory de la version actuelle est retrouvée");
+  step("factory d'une ancienne version ignorée");
 
   // 7. retrait total : le p33 revient au wallet, principal intact malgré la vente du rendement
   await page.click("#withdrawAllBtn");

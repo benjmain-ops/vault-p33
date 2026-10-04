@@ -1,0 +1,65 @@
+# Player bot: sells the vault's yield, buys the lottery tickets from the player wallet,
+# claims its prizes. See README, "Automatic play".
+#
+# Draws are at 06:00 and 18:00 UTC. Two runs before each draw: the second one only acts if the
+# first one was skipped or failed (every step of the bot is idempotent).
+name: play
+
+on:
+  schedule:
+    - cron: "13 3,4,15,16 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print what would be done, send nothing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: write # only used to keep this schedule enabled (see the last step)
+
+concurrency:
+  group: play
+  cancel-in-progress: false
+
+jobs:
+  play:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # No third-party action: this job holds a wallet key.
+      - name: Fetch the code
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git clone --quiet --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" .
+          git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git log -1 --format='commit %h'
+
+      - name: Install dependencies
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+
+      - name: Play
+        env:
+          PLAYER_PRIVATE_KEY: ${{ secrets.PLAYER_PRIVATE_KEY }}
+          VAULT: ${{ secrets.VAULT }}
+          RPC_URL: ${{ secrets.RPC_URL }}
+          TICKETS_PER_DRAW: ${{ vars.TICKETS_PER_DRAW }}
+          KEEP_TICKETS: ${{ vars.KEEP_TICKETS }}
+          SHOW_AMOUNTS: ${{ vars.SHOW_AMOUNTS }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+        run: |
+          if [ -z "$PLAYER_PRIVATE_KEY" ] || [ -z "$VAULT" ]; then
+            echo "Not configured: add the PLAYER_PRIVATE_KEY and VAULT secrets (README, Automatic play)."
+            exit 0
+          fi
+          node keeper/player.js
+
+      # GitHub disables scheduled workflows of public repositories after 60 days without
+      # repository activity. Re-enabling the workflow counts as activity for that timer.
+      - name: Keep the schedule enabled
+        if: always() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/play.yml/enable" || true

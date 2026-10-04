@@ -2,13 +2,14 @@
   "name": "p33-lottery-vault",
   "version": "0.1.0",
   "private": true,
-  "description": "Single-user vault: p33 yield buys BCM lottery tickets (Avalanche)",
+  "description": "Single-owner vault: the yield of staked p33 buys BCM lottery tickets (Avalanche)",
   "scripts": {
     "build": "node scripts/build.js",
     "test": "node scripts/build.js && node --test --test-reporter=spec test/vault.test.js",
     "test:web": "node scripts/build.js && node test/e2e.js",
     "deploy": "node scripts/build.js && node scripts/deploy.js",
-    "keeper": "node keeper/index.js"
+    "keeper": "node keeper/index.js",
+    "player": "node keeper/player.js"
   },
   "dependencies": {
     "@openzeppelin/contracts": "5.0.2",

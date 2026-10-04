@@ -12,6 +12,11 @@ function getRank(mainMatches, compMatches, isRun2) {
   return rank;
 }
 
+/** Main numbers actually played by a ticket: 6 for an ordinary ticket, more for a system play. */
+function playedMains(t) {
+  return Array.from(t.mainNumbers, Number).slice(0, t.isSystemPlay ? Number(t.systemMainCount) : 6);
+}
+
 function combinations(arr, k) {
   const out = [];
   const rec = (start, cur) => {
@@ -49,8 +54,8 @@ function computeWinners(draw, tickets) {
   const perTicket = [];
 
   for (const t of tickets) {
-    const mains = t.mainNumbers.slice(0, Number(t.systemMainCount)).map(Number);
-    const comps = t.compNumbers.slice(0, Number(t.systemCompCount)).map(Number);
+    const mains = playedMains(t);
+    const comps = t.compNumbers.slice(0, t.isSystemPlay ? Number(t.systemCompCount) : 2).map(Number);
     const hits = new Map();
     const mainCombos = t.isSystemPlay ? combinations(mains, 6) : [mains];
     const compCombos = t.isSystemPlay ? combinations(comps, 2) : [comps];
@@ -116,8 +121,11 @@ const ZERO_ROOT = "0x" + "0".repeat(64);
 const SENTINEL_ROOT = "0x" + "0".repeat(63) + "1"; // draw declared with no winner
 const CLAIM_DELAY = 15n * 60n;
 
-/** Reads a full draw and rebuilds its Merkle tree. null if the root does not match. */
-async function loadDrawTree(lottery, drawId, draw) {
+/**
+ * Reads a full draw and rebuilds its Merkle tree.
+ * @returns { tree, winners } — tree is null if the recomputed root does not match the on-chain one.
+ */
+async function loadDraw(lottery, drawId, draw) {
   const ids = await lottery.getDrawTickets(drawId);
   const tickets = [];
   for (let i = 0; i < ids.length; i += 25) {
@@ -141,28 +149,41 @@ async function loadDrawTree(lottery, drawId, draw) {
     }))
   );
   const tree = buildTree(winners);
-  if (!tree || tree.root.toLowerCase() !== draw.merkleRoot.toLowerCase()) return null;
-  return tree;
+  if (!tree || tree.root.toLowerCase() !== draw.merkleRoot.toLowerCase()) return { tree: null, winners };
+  return { tree, winners };
+}
+
+/** Same, returning only the tree (null if the root does not match). */
+async function loadDrawTree(lottery, drawId, draw) {
+  return (await loadDraw(lottery, drawId, draw)).tree;
 }
 
 /**
  * Winning tickets of `owner` to claim.
  * @param lottery ethers contract of the lottery (read-only)
  * @param done    Set of the draws already processed (strings)
- * @returns { claims: [{id, rank, amount, proof}], resolved: [draws to mark as processed], mismatched: [draws whose root differs] }
+ * @param minDrawId draws before this one are ignored (bounds the work of a stateless caller)
+ * @returns { claims: [{id, rank, amount, proof}], resolved: [draws to mark as processed],
+ *            mismatched: [draws whose root differs],
+ *            mismatchedMine: [those where the recomputation finds a prize for `owner`] }
  */
-async function planClaims({ lottery, owner, now, done = new Set(), trees = new Map(), lookback = 2000, log = () => {} }) {
+async function planClaims({ lottery, owner, now, done = new Set(), trees = new Map(), lookback = 2000, minDrawId = 0n, log = () => {} }) {
   const claims = [];
   const resolved = [];
   const mismatched = [];
+  const mismatchedMine = [];
   const ids = Array.from(await lottery.getOwnerTickets(owner)).slice(-lookback);
-  const draws = new Set();
+  const draws = new Map(); // drawId -> the owner's tickets in that draw
   for (let i = 0; i < ids.length; i += 25) {
     const batch = await Promise.all(ids.slice(i, i + 25).map((id) => lottery.getTicket(id)));
-    for (const t of batch) if (!done.has(t.drawId.toString())) draws.add(t.drawId);
+    for (const t of batch) {
+      if (t.drawId < BigInt(minDrawId) || done.has(t.drawId.toString())) continue;
+      if (!draws.has(t.drawId)) draws.set(t.drawId, []);
+      draws.get(t.drawId).push(t);
+    }
   }
 
-  for (const drawId of draws) {
+  for (const [drawId, own] of draws) {
     const key = drawId.toString();
     const draw = await lottery.getDraw(drawId);
     if (!draw.finalized || draw.merkleRoot === ZERO_ROOT) continue; // not resolved yet
@@ -170,25 +191,33 @@ async function planClaims({ lottery, owner, now, done = new Set(), trees = new M
       resolved.push(key);
       continue;
     }
+    // No rank exists below 3 main numbers: if none of the owner's tickets reaches that, there
+    // is nothing to claim and the rest of the draw does not need to be read.
+    const winMain = new Set(Array.from(draw.winningMain, Number));
+    const candidate = own.some((t) => playedMains(t).filter((n) => winMain.has(n)).length >= 3);
+    if (!candidate) {
+      resolved.push(key);
+      continue;
+    }
     if (BigInt(now) < (await lottery.rootPoseA(drawId)) + CLAIM_DELAY) continue;
 
-    if (!trees.has(key)) trees.set(key, await loadDrawTree(lottery, drawId, draw));
-    const tree = trees.get(key);
+    if (!trees.has(key)) trees.set(key, await loadDraw(lottery, drawId, draw));
+    const { tree, winners } = trees.get(key);
     if (!tree) {
       mismatched.push(key);
+      if (winners.some((w) => w.owner.toLowerCase() === owner.toLowerCase())) mismatchedMine.push(key);
       log(`  winnings: draw ${key} — recomputed root differs from the on-chain root, nothing is sent. Handle manually.`);
       continue;
     }
     const mine = [];
     for (const p of proofsFor(tree, owner)) if (!(await lottery.ticketPrizeClaimed(p.id))) mine.push(p);
     if (mine.length) {
-      const sum = mine.reduce((a, p) => a + p.amount, 0n);
-      log(`  winnings: draw ${key} — ${mine.length} winning ticket(s), ${sum} wei gross`);
+      log(`  winnings: draw ${key} — ${mine.length} winning ticket(s)`);
       claims.push(...mine);
     }
     resolved.push(key);
   }
-  return { claims, resolved, mismatched };
+  return { claims, resolved, mismatched, mismatchedMine };
 }
 
-module.exports = { getRank, combinations, computeWinners, buildTree, proofsFor, inHarvestWindow, loadDrawTree, planClaims };
+module.exports = { getRank, combinations, computeWinners, buildTree, proofsFor, inHarvestWindow, loadDraw, loadDrawTree, planClaims };

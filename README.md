@@ -1,121 +1,164 @@
-# Vault p33 → loterie BCM
+# p33 vault → BCM lottery
 
-Chaque utilisateur déploie **son propre vault**, dont il est seul propriétaire. Son p33 y reste
-intact ; seul le rendement hebdomadaire (hausse du ratio p33:xPHAR) est vendu en WAVAX et
-dépensé en tickets de la loterie BCM (`PartnerLotteryCore`, Avalanche C-Chain).
+Each user deploys **their own vault** and is its only owner. The p33 deposited stays intact;
+only its weekly yield (the rise of the p33:xPHAR ratio) is sold for WAVAX and played on the
+BCM lottery (`PartnerLotteryCore`, Avalanche C-Chain).
 
-## Ce que contient le projet
+Web page: `docs/` (GitHub Pages). Everything can be done from a phone, inside a wallet's browser.
 
-| Élément | Fichier | Rôle |
+## What is in the repository
+
+| Part | File | Role |
 |---|---|---|
-| Vault | `contracts/P33LotteryVault.sol` | Dépôt, retrait, et `cycle` : encaissement des gains, vente du rendement et achat de tickets en une transaction |
-| Factory | `contracts/P33LotteryVaultFactory.sol` | Un vault par utilisateur, registre pour le robot |
-| Robot (keeper) | `keeper/` | Vend le rendement, achète les tickets, réclame les gains, pour tous les vaults |
-| Page web | `docs/` | Connexion wallet, création du vault, dépôt, retrait, réglages |
-| Tests | `test/` | 15 tests contrat + robot, 1 parcours complet de la page dans un navigateur |
+| Vault | `contracts/P33LotteryVault.sol` | Deposit, withdrawal, and `cycle`: collects winnings, sells the yield, then buys tickets or pays the budget to a player wallet, in one transaction |
+| Factory | `contracts/P33LotteryVaultFactory.sol` | One vault per user. Holds no funds and has no rights over the vaults |
+| Dry run | `contracts/DryRun.sol` | Never deployed: lets the page simulate the whole flow against the live chain with a read-only call |
+| Player bot | `keeper/player.js` | Runs with the key of a dedicated player wallet: triggers the vault, buys the tickets in the wallet's own name, claims its prizes |
+| Vault keeper | `keeper/index.js` | Alternative bot for vaults that buy the tickets themselves |
+| Schedule | `.github/workflows/play.yml` | Runs the player bot before each draw |
+| Web page | `docs/` | Wallet connection, vault creation, deposit, withdrawal, settings, dry run |
+| Tests | `test/` | Contracts and bots on a local chain, and the page in a real browser |
 
-## Qui peut faire quoi
+## Two ways to play
 
-- **Propriétaire du vault** : dépose, retire le p33 et le WAVAX à tout moment, règle les garde-fous, change de robot.
-- **Robot** : `cycle` (tout en une transaction), ou ses étapes séparées `harvest`, `buyTickets`, `claimPrizes`, `collectWinnings`. Aucun retrait possible. Au pire, un robot compromis gaspille le rendement non encore dépensé, dans la limite des garde-fous.
-- **Factory** : aucun droit sur les vaults, ne détient jamais de fonds.
+**The vault plays.** The vault buys the tickets and holds them. Simple, but the lottery sees a
+contract, not a person: a contract cannot sign the off-chain message BCM uses for a profile
+or a referral.
 
-Garde-fous réglés par le propriétaire :
+**A player wallet plays.** The vault only produces the budget: each pass sells the yield and
+sends the WAVAX to an ordinary wallet set by the owner (`player`). That wallet buys the tickets
+in its own name, so it can have a BCM profile, a referrer, and receive whatever the lottery
+distributes to players. This is the mode used by the automatic setup below.
 
-- Cours de référence automatique : le vault retient le cours du pool à chaque passage et refuse de vendre plus de `maxDeviationBps` (10 % par défaut) en dessous. Rien à tenir à jour. `minWavaxPerP33` reste disponible comme plancher absolu facultatif (0 = aucun).
-- `maxTicketPrice` : prix maximum d'un ticket. Le prix est modifiable par une clé chaude côté BCM ; ce plafond évite qu'un prix anormal vide le budget.
-- `reinvestCap` : montant maximum de gains rejoué à chaque encaissement (0 = rien n'est rejoué). Un gros gain n'est donc jamais rejoué en entier.
+## Who can do what
 
-## Tout faire depuis le téléphone (sans ordinateur ni robot)
+- **Vault owner**: deposits, withdraws p33 and WAVAX at any time, sets the guards, the keeper
+  and the player wallet. The only one able to take funds out.
+- **Keeper** (the player wallet, in player mode): `cycle` and its separate steps. No withdrawal.
+  At worst, a compromised keeper wastes the yield not yet spent, within the guards.
+- **Player wallet**: receives the ticket budget, nothing else. It never has access to the p33.
+- **Factory**: no rights over the vaults.
 
-1. Héberger le dossier `docs/` sur une adresse HTTPS (voir « Publier la page »).
-2. Ouvrir cette adresse dans le navigateur de Trust Wallet et connecter le wallet.
-3. **Première installation** : la page propose de déployer la factory. Elle détecte le pool
-   p33/WAVAX, tu signes une transaction, c'est fait une fois pour toutes. Elle affiche ensuite
-   un lien `?factory=0x…` à partager : chaque personne qui l'ouvre crée son propre vault.
-4. Créer son vault, déposer son p33.
-5. Une fois par semaine (à partir du samedi), ou quand tu veux : **« Lancer le cycle
-   maintenant »**. Une transaction réclame et encaisse les gains, vend le rendement et achète
-   les tickets. La page calcule elle-même les preuves des tickets gagnants.
+Guards:
 
-Aucune clé privée n'est jamais écrite dans un fichier : tout est signé par le wallet.
-Le robot (ci-dessous) devient une option, pour ne plus avoir à appuyer sur le bouton.
+- **Reference price.** The vault keeps a reference bin of the pool and refuses to sell more than
+  `maxDeviationBps` (10% by default) below it. Each pass moves the reference towards the market
+  by at most that distance, and a reference written by a pass cannot be sold against for 6 hours.
+  Nothing to maintain by hand. This protects a sale against a price manipulated at that moment;
+  against the keeper itself it only slows things down (a keeper sending passes for days while
+  holding the pool's price down can walk the reference down). What is exposed is the yield, never
+  the principal. `minWavaxPerP33` is an optional absolute floor on top, which is a hard bound.
+- **`maxTicketPrice`**: the ticket price can be changed by the lottery's operators; this cap
+  stops an abnormal price from draining the budget. The player bot applies it too.
+- **`reinvestCap`**: when the vault plays itself, the most it replays from each collection of
+  winnings.
 
-## Mise en route sur ordinateur
+## Setup from a phone
+
+1. Open the page in the wallet's browser and connect.
+2. **Test without deploying**: the page simulates factory, vault, deposit, sale on the real
+   pool, ticket purchase on the real lottery, payout and withdrawal. Nothing is signed.
+3. Deploy the factory if nobody has yet (one transaction; its address only depends on the code,
+   so everyone using the same version shares it).
+4. Create the vault. Fill in "player wallet" to use the player mode. Deposit p33.
+
+## Automatic play
+
+The bot needs to sign transactions for the player wallet, so its key has to live where the bot
+runs. Use a **dedicated wallet** for this, never the one that owns the vault. It holds the ticket
+budget and owns the tickets, so **a prize belongs to it too**: at each pass the bot claims the
+prizes and moves that money into the vault, where only the vault's owner can withdraw it. Between
+a draw and the next pass, whoever holds the key could claim a prize: protect the account that
+stores it (two-factor authentication on GitHub).
+
+1. Create a new wallet in your wallet app. Its address is the "player wallet" of the vault.
+2. Send it a little AVAX (0.1 is plenty). Afterwards it pays its own fees out of the WAVAX it
+   receives.
+3. On the lottery's site, connect with that wallet once to fill in the profile and the referral.
+4. Fork this repository (or use your own copy). In **Settings → Secrets and variables → Actions**,
+   add two repository secrets:
+   - `PLAYER_PRIVATE_KEY`: the private key of the player wallet;
+   - `VAULT`: the address of your vault.
+5. In the **Actions** tab, enable workflows, open **play**, and use **Run workflow** with
+   "dry run" ticked to check the configuration. Then let the schedule do its work.
+
+Optional repository *variables*:
+
+- `TICKETS_PER_DRAW`: fixed number of tickets per draw. By default the bot spreads what the wallet
+  holds over the draws left before the next weekly sale, with at least one ticket per draw while
+  funds last.
+- `KEEP_TICKETS` (default 30): working balance of the player wallet, in tickets. Prize money above
+  it goes to the vault. Whatever its origin, the wallet never keeps more than three times that, so
+  raise it if one week of yield buys more than 90 tickets.
+- `SHOW_AMOUNTS=1`: print amounts in the logs (left out by default, the logs being public).
+
+What a pass does: asks the vault to sell its yield and pay it out (from Saturday 00:00 UTC:
+after the epoch flip of Thursday 00:00 UTC the p33 ratio rises in steps until Friday evening);
+claims and collects the prizes of the wallet's tickets; sends prize money above the working
+balance to the vault; unwraps a little WAVAX when AVAX for fees runs low; buys the tickets of
+the current draw. About once a day it also sends a pass that only keeps the vault's reference
+price close to the market. Every step is idempotent, so the schedule runs twice before each
+draw. A run that hits a problem fails, and GitHub notifies the repository owner by e-mail.
+
+Every transaction the bot signs goes to the vault named in `VAULT` or to the lottery and WAVAX
+contracts pinned in its code: an RPC endpoint that lies can make a pass fail, not send funds
+elsewhere.
+
+Things to know:
+
+- Secrets are encrypted by GitHub and masked in logs. The bot never prints an address or a
+  transaction hash, and leaves amounts out. Still, run times are public on a public repository:
+  someone determined could match them with purchases on the lottery and link the repository to
+  the player wallet. Use a private repository if that matters.
+- The key is readable by any code that runs in the workflow. Do not merge changes you have not
+  read (bot, workflow, `package-lock.json`), and do not give anyone write access to the
+  repository.
+- Tickets bought by the vault itself before switching to player mode are claimed from the page
+  ("run the cycle now"), not by this bot.
+- GitHub disables scheduled workflows on public repositories after 60 days without activity.
+  The workflow re-enables itself at each run; if GitHub disables it anyway, it sends an e-mail
+  and one tap turns it back on.
+- Scheduled runs can start late when GitHub is busy. That is why they are planned two to three
+  hours before each draw.
+
+The bot can also run anywhere Node.js runs: `cp .env.example .env`, fill it in, `npm run player`.
+
+## Development
 
 ```bash
 npm install
-npm test            # contrats + robot, sur une chaîne locale
-npm run test:web    # la page, dans Chromium (variable CHROMIUM = chemin du binaire)
-cp .env.example .env
+npm test            # contracts and bots, on a local chain
+npm run test:web    # the page, in Chromium (CHROMIUM = path of the binary)
 ```
 
-### 1. Déployer la factory (une seule fois) — ou le faire depuis la page, voir plus haut
+## What is verified, and what is not
 
-```bash
-npm run deploy                    # utilise le pool DLMM p33/WAVAX par défaut (variable POOL pour en changer)
-```
+Verified on a local chain with mock contracts: principal accounting, permissions, guards,
+withdrawals, both play modes, both bots including Merkle proofs in the lottery's leaf format,
+and the page in a real browser with a simulated wallet.
 
-Renseigner d'abord dans `.env` : `DEPLOYER_PRIVATE_KEY`, et `KEEPER_ADDRESS` (l'adresse publique
-de la clé du robot). Reporter ensuite l'adresse affichée dans `docs/config.js` et dans `.env` (`FACTORY`).
+Verified on Avalanche through the page's dry run: creation, deposit, sale on the real pool,
+purchase of a ticket on the real lottery, withdrawal.
 
-### 2. Publier la page
+**Not verified:**
 
-Sur GitHub : Settings → Pages → « Deploy from a branch », branche `main`, dossier `/docs`.
+1. **The prize computation is an assumption.** BCM builds its Merkle tree off-chain and does not
+   publish the method. The bots recompute it (equal split per rank, system-play tickets counted
+   per combination) and **compare their root with the on-chain root before sending anything**.
+   If they differ, nothing is claimed; when a prize seems due for the wallet, the run fails so
+   that somebody looks at it. The prize stays claimable by the ticket's owner (from the
+   lottery's own site for a player wallet); `keeper/lib.js` then needs correcting.
+2. **The player bot against the real chain.** It is tested against mocks that follow the
+   lottery's verified source; its first real runs should be watched.
+3. **How BCM attributes rewards to players** is not documented; the player mode makes the wallet
+   an ordinary player, which is all a contract can do about it.
 
-Le dossier `docs/` est statique : n'importe quel hébergement HTTPS convient (ou IPFS).
-`ethers` est servi en local, sans CDN. Sur iPhone, renseigner `walletConnectProjectId` dans
-`config.js` (identifiant gratuit sur cloud.reown.com).
+## Risks
 
-À la première connexion, l'utilisateur crée son vault (1 transaction), puis dépose
-(autorisation + dépôt). Ensuite la page retrouve son vault toute seule.
-
-### 3. Lancer le robot
-
-```bash
-DRY_RUN=1 npm run keeper run   # affiche ce qui serait fait
-npm run keeper run             # un cycle sur tous les vaults de la factory
-npm run keeper status
-```
-
-En cron, deux passages par jour suffisent, par exemple :
-
-```
-15 7,19 * * *  cd /chemin/p33-lottery-vault && npm run keeper run >> keeper.log 2>&1
-```
-
-Le robot ne vend le rendement qu'entre le samedi 00:00 UTC et le mercredi 22:00 UTC : après
-le changement d'epoch du jeudi 00:00 UTC, le ratio p33 monte par paliers jusqu'au vendredi soir
-(mesuré on-chain sur l'epoch du 24 septembre 2026 : dernier palier le vendredi à 19:15 UTC). À chaque
-passage, il envoie **une transaction `cycle` par vault** : gains réclamés et encaissés, rendement
-vendu, tickets achetés. Une étape impossible (cours sous le plancher, tirage clos, loterie en
-pause) est sautée sans bloquer les autres. Des transactions supplémentaires ne suivent que s'il
-reste plus de 20 tickets à acheter ou plus de 50 gains à réclamer.
-
-Le robot paie le gas de tous les vaults. Il affiche son solde à chaque passage et signale
-quand il passe sous `MIN_GAS_AVAX` (0,05 AVAX par défaut). Sans gas, rien n'est perdu : tout
-reprend au passage suivant, et le bouton « Lancer le cycle maintenant » de la page fait la
-même chose avec le wallet du propriétaire (hors réclamation des gains, qui demande les preuves).
-
-## Ce qui est vérifié, et ce qui ne l'est pas
-
-Vérifié ici, sur une chaîne locale avec des contrats simulés :
-
-- la comptabilité du principal, les droits, les garde-fous, les retraits ;
-- le cycle complet du robot, preuves Merkle comprises, au format de feuille exact de la loterie ;
-- le parcours de la page dans un vrai navigateur avec un wallet simulé : déploiement de la factory, création du vault, dépôt, cycle, gain réclamé et retiré, lecture seule pour un autre wallet.
-
-**Non vérifié**, faute d'accès au réseau Avalanche depuis l'environnement de construction :
-
-1. **Aucun test sur un fork du mainnet.** Le swap par le vrai router Pharaoh, le vrai p33 et la vraie loterie n'ont pas été exécutés. Les interfaces ont été relevées dans le code vérifié de chaque contrat, mais le premier essai réel doit se faire avec un petit montant.
-2. **Le calcul des gains est une hypothèse.** BCM calcule l'arbre Merkle hors chaîne et ne publie pas sa méthode. Le robot le recalcule (partage égal par rang, tickets « system play » comptés par combinaison) et **compare sa racine à la racine on-chain avant d'envoyer quoi que ce soit**. Si elles diffèrent, il l'écrit dans le journal et ne réclame rien. Les gains ne sont pas perdus (un ticket gagnant non réclamé n'a pas de date limite dans le contrat), mais **ils ne peuvent être réclamés que par le vault**, propriétaire des tickets : il faudra corriger `keeper/lib.js`, ou obtenir les preuves auprès de BCM et les passer à `claimPrizes`. Le site de BCM ne peut pas réclamer à la place du vault.
-3. **Trust Wallet et WalletConnect** n'ont pas été essayés en réel, notamment le déploiement d'un contrat depuis le navigateur de l'app.
-4. **Le gas d'un lot de 20 tickets** sur la vraie loterie : réduire `buyChunk` dans `keeper/index.js` si la transaction dépasse la limite.
-
-## Risques à connaître
-
-- **Espérance négative.** Le rendement joué est perdu en moyenne ; c'est un échange rendement contre variance.
-- **Le principal est garanti en xPHAR, pas en dollars.** Il suit le cours du p33.
-- **La loterie BCM est récente et non auditée.** Les WAVAX engagés dans un tirage dépendent de son contrat, de sa racine Merkle (clé chaude) et de son `emergencyWithdraw` (multisig).
-- **Ces contrats ne sont pas audités non plus.**
-- **Cadre légal.** Proposer au public l'accès à un jeu d'argent est réglementé en France (ANJ). Chaque utilisateur garde ses fonds, ce qui écarte la mutualisation, mais la diffusion de la page mérite un avis juridique avant ouverture au-delà d'un cercle privé.
+- **Negative expectation.** On average the yield played is lost; this trades yield for variance.
+- **The principal is protected in xPHAR, not in dollars.** It follows the price of p33.
+- **The BCM lottery is recent and unaudited.** WAVAX committed to a draw depends on its contract,
+  its Merkle root (set by a hot key) and its `emergencyWithdraw` (multisig).
+- **These contracts are unaudited too.** Use amounts you can afford to lose.
+- **The player wallet's key is held by the scheduler.** Whoever controls the repository controls
+  that wallet: its ticket budget, its tickets, and a prize until the next pass moves it to the vault.

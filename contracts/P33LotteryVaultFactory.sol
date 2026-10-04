@@ -16,8 +16,6 @@ contract P33LotteryVaultFactory {
     address public immutable lottery;
     /// @notice Default p33/WAVAX DLMM pool of the vaults created.
     address public immutable pool;
-    /// @notice Keeper proposed by default. Each owner can change it on their own vault.
-    address public immutable defaultKeeper;
 
     address[] public allVaults;
     /// @notice True for every vault created by this factory.
@@ -30,31 +28,36 @@ contract P33LotteryVaultFactory {
         address p33_,
         address wavax_,
         address lottery_,
-        address pool_,
-        address defaultKeeper_
+        address pool_
     ) {
         p33 = p33_;
         wavax = wavax_;
         lottery = lottery_;
         pool = pool_;
-        defaultKeeper = defaultKeeper_;
     }
 
-    function createVault(uint16 maxDeviationBps, uint256 maxTicketPrice, uint256 reinvestCap)
-        external
-        returns (address vault)
-    {
+    /// @param keeper Address allowed to run the cycle besides the owner (0 = nobody).
+    /// @param player Wallet that receives the ticket budget and plays in its own name
+    ///               (0 = the vault buys the tickets itself).
+    function createVault(
+        uint16 maxDeviationBps,
+        uint256 maxTicketPrice,
+        uint256 reinvestCap,
+        address keeper,
+        address player
+    ) external returns (address vault) {
         vault = address(
             new P33LotteryVault(
                 msg.sender,
-                defaultKeeper,
+                keeper,
                 p33,
                 wavax,
                 lottery,
                 pool,
                 maxDeviationBps,
                 maxTicketPrice,
-                reinvestCap
+                reinvestCap,
+                player
             )
         );
         allVaults.push(vault);

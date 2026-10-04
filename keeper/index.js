@@ -45,18 +45,28 @@ function defaults(cfg = {}) {
   };
 }
 
-/** Yield to sell now: { amount, minOut }, or zeros if we have to wait. */
+/**
+ * Yield to sell now: { amount, minOut }, or zeros if we have to wait.
+ *
+ * When the sale is refused because the price is too far below the vault's reference, a pass is
+ * still sent, with nothing offered for sale ({ amount: 0, postponed: true }): it moves the
+ * vault's reference one notch towards the market. Without that pass the reference would never
+ * follow a lasting price move and the sale would stay blocked.
+ */
 async function planHarvest(ctx, vault) {
   const { cfg, now } = ctx;
   const none = { amount: 0n, minOut: 0n };
   const harvestable = await vault.harvestable();
   if (harvestable < cfg.minHarvest) return none;
   if (!inHarvestWindow(now)) return cfg.log(`  harvest: outside the window (yield still compounding until Saturday 00:00 UTC, or flip approaching)`), none;
+  const [refTime, minAge] = await Promise.all([vault.refTime(), vault.MIN_REF_AGE()]);
+  if (now - refTime < minAge) return cfg.log(`  harvest: the vault's reference price is too recent, next pass`), none;
   let quoted;
   try {
     quoted = await vault.harvest.staticCall(harvestable, 0n);
   } catch (e) {
-    return cfg.log(`  harvest: rejected in simulation, price below the floor? (${e.shortMessage || e.message})`), none;
+    cfg.log(`  harvest: postponed, price too far below the vault's reference; this pass moves the reference (${e.shortMessage || e.message})`);
+    return { amount: 0n, minOut: 0n, postponed: true };
   }
   cfg.log(`  harvest: ${fmt(harvestable)} p33 -> ~${fmt(quoted)} WAVAX`);
   return { amount: harvestable, minOut: (quoted * (10000n - cfg.slippageBps)) / 10000n };
@@ -103,10 +113,13 @@ async function runVault(ctx, addr) {
     const willBuy = open && (budget >= price || harvest.amount > 0n);
     if (!open && budget >= price) cfg.log(`  purchase: no open draw, or ticket price above the vault's cap`);
 
-    if (harvest.amount === 0n && !claims.length && pending === 0n && !willBuy) return cfg.log(`  nothing to do`);
+    if (harvest.amount === 0n && !harvest.postponed && !claims.length && pending === 0n && !willBuy) return cfg.log(`  nothing to do`);
     if (cfg.dryRun) return cfg.log(`  (dry run) cycle not sent`);
 
-    await (await vault.cycle(harvest.amount, harvest.minOut, cfg.buyChunk, ...split(claims.slice(0, 50)))).wait();
+    // Gas: a step skipped in the simulation can become possible before the transaction is mined.
+    const args = [harvest.amount, harvest.minOut, cfg.buyChunk, ...split(claims.slice(0, 50))];
+    const gasLimit = ((await vault.cycle.estimateGas(...args)) * 3n) / 2n;
+    await (await vault.cycle(...args, { gasLimit })).wait();
     for (let i = 50; i < claims.length; i += 50) {
       await (await vault.claimPrizes(...split(claims.slice(i, i + 50)))).wait();
     }
@@ -212,4 +225,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { runAll, runVault, makeContext, loadDrawTree, status };
+module.exports = { runAll, runVault, makeContext, planHarvest, loadDrawTree, status, VAULT_ABI, LOTTERY_ABI };

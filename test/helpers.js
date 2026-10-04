@@ -11,9 +11,10 @@ async function deploy(name, signer, ...args) {
   return c;
 }
 
-/** Full environment: tokens, router, lottery, factory, one vault for `owner`. */
+/** Full environment: tokens, pool, lottery, factory, one vault for `owner`. */
 // `reinvest`: false = winnings set aside; true = cap of 100 WAVAX; or an explicit cap (bigint).
-async function setup({ reinvest = false } = {}) {
+// `playerMode`: the vault pays its budget to `player`, who is also its keeper.
+async function setup({ reinvest = false, playerMode = false } = {}) {
   const gp = ganache.provider({
     logging: { quiet: true },
     chain: { hardfork: "shanghai" },
@@ -22,20 +23,23 @@ async function setup({ reinvest = false } = {}) {
   const provider = new ethers.BrowserProvider(gp, undefined, { cacheTimeout: -1 }); // no cache: two identical calls must be re-evaluated
   const [deployer, owner, keeper, player, stranger] = await Promise.all([0, 1, 2, 3, 4].map((i) => provider.getSigner(i)));
 
-  const wavax = await deploy("MockERC20", deployer, "Wrapped AVAX", "WAVAX");
+  const wavax = await deploy("MockWAVAX", deployer);
   const p33 = await deploy("MockP33", deployer);
   const pool = await deploy("MockDlmmPool", deployer, p33.target, wavax.target);
   const lottery = await deploy("MockLottery", deployer, wavax.target, E("0.19"));
-  const factory = await deploy("P33LotteryVaultFactory", deployer, p33.target, wavax.target, lottery.target, pool.target, keeper.address);
+  const factory = await deploy("P33LotteryVaultFactory", deployer, p33.target, wavax.target, lottery.target, pool.target);
 
   await (await wavax.mint(pool.target, E("1000"))).wait();
   await (await pool.sync()).wait();
   await (await wavax.mint(lottery.target, E("1000"))).wait();
   await (await p33.mint(owner.address, E("10000"))).wait();
-  await (await wavax.mint(player.address, E("100"))).wait();
+  if (!playerMode) await (await wavax.mint(player.address, E("100"))).wait();
+  await (await wavax.deposit({ value: E("50") })).wait(); // native backing for withdraw()
 
   // sale refused more than 10% below the reference price, ticket price capped at 0.5 WAVAX
-  await (await factory.connect(owner).createVault(1000, E("0.5"), reinvest ? (reinvest === true ? E("100") : reinvest) : 0n)).wait();
+  const cap = reinvest ? (reinvest === true ? E("100") : reinvest) : 0n;
+  const [keeperAddr, playerAddr] = playerMode ? [player.address, player.address] : [keeper.address, ethers.ZeroAddress];
+  await (await factory.connect(owner).createVault(1000, E("0.5"), cap, keeperAddr, playerAddr)).wait();
   const vaultAddr = (await factory.vaultsOf(owner.address))[0];
   const vault = new ethers.Contract(vaultAddr, art("P33LotteryVault").abi, owner);
 

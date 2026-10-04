@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 
 // Test-only mocks. MockLottery reproduces the rules of PartnerLotteryCore that
 // concern the vault: exact payment, open draw, ticket ownership, Merkle leaf
@@ -14,6 +15,43 @@ contract MockERC20 is ERC20 {
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
+    }
+}
+
+/// @dev Wrapped native token: deposit() / withdraw() like WAVAX.
+contract MockWAVAX is MockERC20 {
+    constructor() MockERC20("Wrapped AVAX", "WAVAX") {}
+
+    function deposit() external payable {
+        _mint(msg.sender, msg.value);
+    }
+
+    function withdraw(uint256 amount) external {
+        _burn(msg.sender, amount);
+        (bool ok,) = msg.sender.call{value: amount}("");
+        require(ok, "mock: native transfer failed");
+    }
+
+    receive() external payable {}
+}
+
+/// @dev Stands for a reward distributed to players: an NFT sent with safeMint, and reward
+///      tokens that only the player's own address can claim.
+contract MockRewards is ERC721 {
+    MockERC20 public immutable rewardToken;
+    uint256 public nextId = 1;
+
+    constructor(MockERC20 t) ERC721("Reward", "RWD") {
+        rewardToken = t;
+    }
+
+    function airdropNft(address to) external returns (uint256 id) {
+        id = nextId++;
+        _safeMint(to, id);
+    }
+
+    function claim() external {
+        rewardToken.mint(msg.sender, 100e18);
     }
 }
 
@@ -40,36 +78,53 @@ contract MockP33 is ERC20 {
 }
 
 /// @dev Simplified DLMM pool: we send it the input token then call swap().
+///      Bins behave like the real ones: each bin is 0.25% above the previous one, and the
+///      swap executes at the price of the active bin.
 contract MockDlmmPool {
     address public immutable getTokenX;
     address public immutable getTokenY;
-    uint256 public rate; // Y received per X sold, 1e18, at the active bin
-    uint24 public getActiveId = 8387459;
-    mapping(uint24 => uint256) internal rateAt;
+    uint24 internal constant ID0 = 8387459;
+    uint256 internal constant RATE0 = 0.017e18; // Y per X at bin ID0, 1e18
+    uint256 public rate = RATE0; // Y received per X sold, 1e18, at the active bin
+    uint24 public getActiveId = ID0;
     uint256 internal reserveX;
     uint256 internal reserveY;
 
     constructor(address x, address y) {
         getTokenX = x;
         getTokenY = y;
-        rate = 0.017e18;
-        rateAt[getActiveId] = rate;
     }
 
     function getBinStep() external pure returns (uint16) {
         return 25;
     }
 
-    /// @dev Moves the market: a new active bin with the given price.
+    function _rateAt(uint24 id) internal pure returns (uint256 r) {
+        r = RATE0;
+        for (uint24 i = ID0; i < id; i++) r = (r * 10_025) / 10_000;
+        for (uint24 i = ID0; i > id; i--) r = (r * 10_000) / 10_025;
+    }
+
+    /// @dev Moves the market to the bin whose price is closest below `r`; swaps execute at `r`.
     function setRate(uint256 r) external {
-        getActiveId = r >= rate ? getActiveId + 1 : getActiveId - 1;
+        uint24 id = ID0;
+        uint256 cur = RATE0;
+        while (cur > r) {
+            id--;
+            cur = (cur * 10_000) / 10_025;
+        }
+        while ((cur * 10_025) / 10_000 <= r) {
+            id++;
+            cur = (cur * 10_025) / 10_000;
+        }
+        getActiveId = id;
         rate = r;
-        rateAt[getActiveId] = r;
     }
 
     /// @dev Price of X in Y at a bin, 128.128 fixed point.
     function getPriceFromId(uint24 id) external view returns (uint256) {
-        return (rateAt[id] << 128) / 1e18;
+        uint256 r = id == getActiveId ? rate : _rateAt(id);
+        return (r << 128) / 1e18;
     }
 
     /// @dev To be called after funding the pool.

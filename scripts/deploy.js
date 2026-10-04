@@ -1,6 +1,6 @@
-// Déploie la factory sur Avalanche C-Chain. À faire une seule fois.
-//   npm run deploy            -> liste les pools p33/WAVAX si TICK_SPACING n'est pas renseigné
-//   TICK_SPACING=… npm run deploy
+// Deploys the factory on Avalanche C-Chain from the command line. One time only.
+// The web page can do the same from a wallet (deterministic address); this script is the
+// alternative for a computer:   npm run deploy      (POOL=0x… to use another pool)
 require("dotenv").config();
 const { ethers } = require("ethers");
 const artifact = require("../artifacts/P33LotteryVaultFactory.json");
@@ -14,24 +14,20 @@ const ADDR = {
 };
 
 (async () => {
-  const { RPC_URL, DEPLOYER_PRIVATE_KEY, KEEPER_ADDRESS } = process.env;
-  if (!RPC_URL) throw new Error("RPC_URL requis (.env)");
+  const { RPC_URL, DEPLOYER_PRIVATE_KEY } = process.env;
+  if (!RPC_URL || !DEPLOYER_PRIVATE_KEY) throw new Error("RPC_URL and DEPLOYER_PRIVATE_KEY are required (.env)");
   const provider = new ethers.JsonRpcProvider(RPC_URL);
   const { chainId } = await provider.getNetwork();
-  if (chainId !== 43114n) throw new Error(`Mauvais réseau (chainId ${chainId}), attendu 43114`);
+  if (chainId !== 43114n) throw new Error(`Wrong network (chainId ${chainId}), expected 43114`);
 
   const pool = process.env.POOL ? ethers.getAddress(process.env.POOL) : ADDR.pool;
-  if (!DEPLOYER_PRIVATE_KEY || !KEEPER_ADDRESS) throw new Error("DEPLOYER_PRIVATE_KEY and KEEPER_ADDRESS are required (.env)");
-
   const wallet = new ethers.Wallet(DEPLOYER_PRIVATE_KEY, provider);
-  console.log(`Déploiement depuis ${wallet.address}, keeper par défaut ${KEEPER_ADDRESS}, pool ${pool}…`);
-  const factory = await new ethers.ContractFactory(artifact.abi, artifact.bytecode, wallet).deploy(
-    ADDR.p33, ADDR.wavax, ADDR.lottery, pool, ethers.getAddress(KEEPER_ADDRESS)
-  );
+  console.log(`Deploying from ${wallet.address}, pool ${pool}…`);
+  const factory = await new ethers.ContractFactory(artifact.abi, artifact.bytecode, wallet).deploy(ADDR.p33, ADDR.wavax, ADDR.lottery, pool);
   await factory.waitForDeployment();
-  console.log(`\nFactory déployée : ${factory.target}`);
+  console.log(`\nFactory deployed: ${factory.target}`);
   console.log(`-> docs/config.js : factory: "${factory.target}"`);
-  console.log(`-> .env          : FACTORY=${factory.target}`);
+  console.log(`-> .env           : FACTORY=${factory.target}`);
 })().catch((e) => {
   console.error(e.message || e);
   process.exit(1);
