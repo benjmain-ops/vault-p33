@@ -1,0 +1,10 @@
+{
+  "name": "p33-vault-bots",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Runtime dependencies of the bots, kept apart from the development tools: this is all the scheduled workflow installs",
+  "dependencies": {
+    "@openzeppelin/merkle-tree": "1.0.8",
+    "ethers": "6.17.0"
+  }
+}

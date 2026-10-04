@@ -148,6 +148,9 @@ async function runPlayer({ signer, vaultAddress, cfg: userCfg }) {
   const provider = signer.provider;
   const me = await signer.getAddress();
   const vault = new ethers.Contract(vaultAddress, VAULT_ABI, signer);
+  // The most likely mistake: an address that is a wallet, or another contract, instead of the vault.
+  const notVault = "VAULT is not a vault: use the address shown under 'my vault' on the page, not a wallet's";
+  if ((await provider.getCode(vaultAddress)) === "0x") throw new Error(notVault);
   const report = {
     sold: 0n, received: 0n, claimed: 0, collected: 0n, bought: 0n, swept: 0n, lowGas: false, problems: [],
     // for the private recap only
@@ -173,7 +176,9 @@ async function runPlayer({ signer, vaultAddress, cfg: userCfg }) {
 
   const [playerAddr, keeperAddr, ownerAddr, lotteryAddr, wavaxAddr] = await Promise.all([
     vault.player(), vault.keeper(), vault.owner(), vault.lottery(), vault.wavax(),
-  ]);
+  ]).catch(() => {
+    throw new Error(notVault);
+  });
   if (!same(playerAddr, me)) throw new Error("this wallet is not the player set on the vault (vault settings, 'player wallet')");
   if ((await provider.getNetwork()).chainId === MAINNET.chainId && (!same(lotteryAddr, MAINNET.lottery) || !same(wavaxAddr, MAINNET.wavax))) {
     throw new Error("the vault does not point at the expected lottery and WAVAX contracts");
@@ -399,6 +404,9 @@ async function main() {
   }
   if (!env.PLAYER_PRIVATE_KEY || !env.VAULT) throw new Error("PLAYER_PRIVATE_KEY and VAULT are required");
   if (!ethers.isAddress(env.VAULT.trim())) throw new Error("VAULT is not a valid address");
+  if (!/^(0x)?[0-9a-fA-F]{64}$/.test(env.PLAYER_PRIVATE_KEY.trim())) {
+    throw new Error("PLAYER_PRIVATE_KEY is not a private key: 64 hexadecimal characters are expected, not a recovery phrase or an address");
+  }
   // First RPC that answers. Small batches: public endpoints cap the size of batched requests.
   const urls = env.RPC_URL ? env.RPC_URL.split(",").map((u) => u.trim()).filter(Boolean) : RPC_URLS;
   let provider;

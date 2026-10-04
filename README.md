@@ -128,8 +128,9 @@ Things to know:
   someone determined could match them with purchases on the lottery and link the repository to
   the player wallet. Use a private repository if that matters.
 - The key is readable by any code that runs in the workflow. Do not merge changes you have not
-  read (bot, workflow, `package-lock.json`), and do not give anyone write access to the
-  repository.
+  read (bot, workflow, `keeper/package-lock.json`), and do not give anyone write access to the
+  repository. The workflow only installs the bots' own run-time dependencies, pinned in
+  `keeper/`, not the development tools.
 - Tickets bought by the vault itself before switching to player mode are claimed from the page
   ("run the cycle now"), not by this bot.
 - GitHub disables scheduled workflows on public repositories after 60 days without activity.
