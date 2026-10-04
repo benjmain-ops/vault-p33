@@ -118,6 +118,20 @@ function buildMessage({ draw, sold, byRank, next, price }, { lang = "fr", tz = "
   return lines.join("\n");
 }
 
+/**
+ * The chat as the bot API wants it: "@name" or a numeric id. A public link (t.me/name) is
+ * accepted too. An invitation link (t.me/+...) belongs to a private chat and names nothing.
+ */
+function chatId(value) {
+  const v = String(value || "").trim();
+  if (/^-?\d+$/.test(v) || /^@\w+$/.test(v)) return v;
+  const m = v.match(/^(?:https?:\/\/)?(?:t\.me|telegram\.me)\/([^/?#]+)/i);
+  if (m && /^\w+$/.test(m[1]) && !/^joinchat$/i.test(m[1])) return "@" + m[1];
+  if (m || /joinchat/i.test(v)) throw new Error("ANNOUNCE_CHAT is an invitation link to a private chat: make the channel public and use its @name, or use its numeric id");
+  if (/^\w+$/.test(v)) return "@" + v;
+  throw new Error("ANNOUNCE_CHAT is not a channel name: expected @name, a t.me/name link or a numeric id");
+}
+
 async function send({ token, chat, text, playUrl, lang = "fr", api = "https://api.telegram.org" }) {
   const L = TEXT[lang] || TEXT.fr;
   const body = { chat_id: chat, text, parse_mode: "HTML" };
@@ -163,7 +177,7 @@ async function main() {
   const playUrl = env.PLAY_URL || (repo ? `https://${repo[0].toLowerCase()}.github.io/${repo[1]}/play/` : "");
   if (env.DRY_RUN === "1") return console.log(text.replace(/<\/?b>/g, ""));
   if (!env.ANNOUNCE_BOT_TOKEN || !env.ANNOUNCE_CHAT) return console.log("Not configured: add the ANNOUNCE_BOT_TOKEN and ANNOUNCE_CHAT secrets (README, Results bot).");
-  await send({ token: env.ANNOUNCE_BOT_TOKEN.trim(), chat: env.ANNOUNCE_CHAT.trim(), text, playUrl, lang, api: env.TELEGRAM_API });
+  await send({ token: env.ANNOUNCE_BOT_TOKEN.trim(), chat: chatId(env.ANNOUNCE_CHAT), text, playUrl, lang, api: env.TELEGRAM_API });
   if (env.PUBLISHED_FILE) fs.writeFileSync(env.PUBLISHED_FILE, draw.id.toString() + "\n"); // lets the workflow remember this draw
   console.log("published");
 }
@@ -175,4 +189,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { latestExecuted, collect, buildMessage, send, bestRank };
+module.exports = { latestExecuted, collect, buildMessage, send, bestRank, chatId };

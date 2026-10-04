@@ -796,7 +796,11 @@ test("player bot: private recap of a pass, empty when nothing happened", async (
 
 test("results bot: the latest draw is published once to the Telegram chat, with numbers, winners and the next draw", async () => {
   const http = require("http");
-  const { latestExecuted, collect, buildMessage, send } = require("../keeper/announce");
+  const { latestExecuted, collect, buildMessage, send, chatId } = require("../keeper/announce");
+  for (const v of ["@sixte_resultats", "https://t.me/sixte_resultats", "t.me/sixte_resultats", "sixte_resultats", " https://t.me/sixte_resultats/ "]) assert.equal(chatId(v), "@sixte_resultats", v);
+  assert.equal(chatId("-1001234567890"), "-1001234567890");
+  assert.throws(() => chatId("https://t.me/+AbCdEf123"), /invitation link/);
+  assert.throws(() => chatId("https://t.me/joinchat/AbCd"), /invitation link/);
   const s = await setup();
   assert.equal(await latestExecuted(s.lottery), null, "no draw yet");
 
