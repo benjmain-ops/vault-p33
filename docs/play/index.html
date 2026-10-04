@@ -1,0 +1,908 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sixte</title>
+<meta name="description" content="Sixte : une interface indépendante pour jouer à la loterie AVAX. 6 numéros sur 24, deux tirages par jour.">
+<meta name="theme-color" content="#EDF0F3">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<style>
+  @font-face {
+    font-family: "Archivo";
+    src: url("fonts/archivo.woff2") format("woff2");
+    font-weight: 100 900;
+    font-stretch: 62% 125%;
+    font-display: swap;
+  }
+  :root {
+    --page: #EDF0F3;
+    --paper: #FFFFFF;
+    --ink: #15181D;
+    --muted: #5B6472;
+    --rule: #D3D9E0;
+    --red: #DC2F33;      /* the slip's printing ink */
+    --pen: #1B3FA8;      /* what the player writes */
+    --hi: #FFE45C;       /* highlighter over matched numbers */
+    --bad: #B3261E;
+    --wide: 100%;
+    --narrow: 64%;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font: 400 1rem/1.5 "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-stretch: var(--wide);
+  }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  button:disabled { cursor: default; }
+  :focus-visible { outline: 3px solid var(--pen); outline-offset: 2px; border-radius: 4px; }
+  a { color: var(--pen); }
+  .num { font-variant-numeric: tabular-nums; }
+  [hidden] { display: none !important; }
+
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+
+  /* top bar */
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 0; }
+  .brand { font-weight: 800; font-stretch: var(--narrow); font-size: 1.75rem; letter-spacing: 0.01em; color: var(--ink); text-decoration: none; line-height: 1; }
+  .top-actions { display: flex; align-items: center; gap: 8px; }
+  .btn {
+    border: 1.5px solid var(--ink); background: transparent; border-radius: 8px;
+    padding: 10px 14px; font-weight: 650; line-height: 1.2; min-height: 44px;
+  }
+  .btn.primary { background: var(--pen); border-color: var(--pen); color: #fff; }
+  .btn.primary:disabled { background: #9AA6C7; border-color: #9AA6C7; }
+  .btn.quiet { border-color: transparent; padding-inline: 10px; color: var(--muted); }
+  .btn.small { min-height: 38px; padding: 7px 12px; font-size: 0.9375rem; }
+
+  /* lead: the countdown is the headline */
+  .lead { padding: 20px 0 22px; }
+  h1 {
+    margin: 0; font-weight: 800; font-stretch: var(--narrow);
+    font-size: clamp(2.4rem, 10.5vw, 5rem); line-height: 0.95; letter-spacing: -0.005em;
+    text-wrap: balance;
+  }
+  .lead p { margin: 12px 0 0; color: var(--muted); max-width: 46ch; }
+
+  .layout { display: grid; gap: 28px; }
+  @media (min-width: 940px) {
+    .layout { grid-template-columns: minmax(0, 540px) minmax(0, 1fr); gap: 56px; align-items: start; }
+  }
+
+  /* the play slip */
+  .slip {
+    background: var(--paper); border-radius: 8px; position: relative;
+    box-shadow: 0 0 0 1px var(--rule), 0 18px 28px -22px rgba(21, 24, 29, 0.55);
+  }
+  /* timing marks, as on a slip read by a machine */
+  .slip::before {
+    content: ""; display: block; height: 9px; margin: 0 18px;
+    background: repeating-linear-gradient(90deg, var(--ink) 0 5px, transparent 5px 15px);
+    transform: translateY(10px);
+  }
+  .slip-body { padding: 26px 18px 18px; }
+  .slip-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; color: var(--red); }
+  .slip-head strong { font-weight: 800; font-stretch: var(--narrow); font-size: 1.25rem; letter-spacing: 0.01em; }
+  .slip-head span { font-size: 0.875rem; font-weight: 600; }
+
+  .lines { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 14px; }
+  .line-tab {
+    width: 44px; height: 44px; border-radius: 50%; border: 1.5px solid var(--rule); background: var(--paper);
+    font-weight: 750; font-stretch: var(--narrow); font-size: 1.125rem; color: var(--muted); position: relative;
+  }
+  .line-tab[aria-selected="true"] { border-color: var(--pen); color: var(--pen); box-shadow: inset 0 0 0 1.5px var(--pen); }
+  .line-tab.full { background: var(--pen); border-color: var(--pen); color: #fff; }
+  .line-tab.full[aria-selected="true"] { box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--pen); }
+  .line-tab.add { border-style: dashed; color: var(--ink); }
+
+  .grid-label { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 8px; }
+  .grid-label b { font-weight: 650; }
+  .grid-label span { color: var(--muted); font-size: 0.9375rem; }
+  .grid { display: grid; gap: 7px; }
+  .grid.main { grid-template-columns: repeat(6, 1fr); }
+  .grid.comp { grid-template-columns: repeat(6, 1fr); }
+  .box {
+    position: relative; aspect-ratio: 1; border: 1.5px solid var(--red); border-radius: 7px; background: var(--paper);
+    color: var(--red); font-weight: 750; font-stretch: var(--narrow); font-size: clamp(1.15rem, 5.2vw, 1.5rem); line-height: 1;
+    display: grid; place-items: center; padding: 0;
+  }
+  .grid.comp .box { border-radius: 50%; }
+  .box svg { position: absolute; inset: 9%; width: 82%; height: 82%; display: none; pointer-events: none; transform: rotate(var(--r, 0deg)); }
+  .box[aria-pressed="true"] svg { display: block; }
+  .box svg { mix-blend-mode: multiply; }
+  .box svg path { fill: none; stroke: var(--pen); stroke-width: 3.3; stroke-linecap: round; }
+  .box.fresh svg path { stroke-dasharray: 42; stroke-dashoffset: 42; animation: stroke 0.14s ease-out forwards; }
+  .box.fresh svg path + path { animation-delay: 0.09s; }
+  @keyframes stroke { to { stroke-dashoffset: 0; } }
+  .box:disabled:not([aria-pressed="true"]) { opacity: 0.42; }
+  @media (prefers-reduced-motion: reduce) { .box.fresh svg path { animation: none; stroke-dashoffset: 0; } }
+
+  .comp-block { margin-top: 18px; }
+  .slip-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+
+  /* perforation between the grids and the stub */
+  .perf { position: relative; border-top: 2px dashed #C3CAD3; margin: 0; }
+  .perf::before, .perf::after {
+    content: ""; position: absolute; top: -10px; width: 18px; height: 18px; border-radius: 50%; background: var(--page);
+    box-shadow: inset 0 0 0 1px var(--rule);
+  }
+  .perf::before { left: -9px; clip-path: inset(0 0 0 50%); }
+  .perf::after { right: -9px; clip-path: inset(0 50% 0 0); }
+
+  .stub { padding: 18px; }
+  .stub-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .stub-total { font-weight: 800; font-stretch: var(--narrow); font-size: 2rem; line-height: 1.1; }
+  .stub-note { color: var(--muted); font-size: 0.9375rem; margin: 6px 0 0; }
+  .stub .btn.primary { width: 100%; margin-top: 14px; min-height: 52px; font-size: 1.0625rem; }
+  .steps { list-style: none; margin: 12px 0 0; padding: 0; font-size: 0.9375rem; color: var(--muted); }
+  .steps li { padding: 3px 0 3px 22px; position: relative; }
+  .steps li::before { content: ""; position: absolute; left: 3px; top: 0.72em; width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--muted); }
+  .steps li.doing { color: var(--ink); font-weight: 600; }
+  .steps li.doing::before { border-color: var(--pen); background: var(--pen); }
+  .steps li.done::before { border-color: var(--ink); background: var(--ink); }
+
+  /* facts and ranks */
+  h2 { margin: 0 0 10px; font-weight: 800; font-stretch: var(--narrow); font-size: 1.75rem; line-height: 1.1; }
+  .facts dl { margin: 0 0 26px; }
+  .facts dl div { display: flex; justify-content: space-between; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--rule); }
+  .facts dt { color: var(--muted); }
+  .facts dd { margin: 0; font-weight: 650; text-align: right; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: right; padding: 9px 0 9px 10px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+  th { font-weight: 600; color: var(--muted); font-size: 0.875rem; vertical-align: bottom; white-space: normal; }
+  th:first-child, td:first-child { text-align: left; padding-left: 0; }
+  td.combo { font-weight: 700; font-stretch: var(--narrow); font-size: 1.125rem; }
+  tr.top-rank td { font-weight: 750; }
+  .fine { color: var(--muted); font-size: 0.9375rem; margin: 12px 0 0; max-width: 60ch; }
+
+  /* tickets and results */
+  .below { margin-top: 44px; }
+  .tabs { display: flex; gap: 22px; border-bottom: 1px solid var(--rule); margin-bottom: 6px; }
+  .tab { border: 0; background: none; padding: 10px 0; font-weight: 800; font-stretch: var(--narrow); font-size: 1.5rem; color: var(--muted); border-bottom: 3px solid transparent; margin-bottom: -1px; }
+  .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+  .group { padding: 16px 0; border-bottom: 1px solid var(--rule); }
+  .group-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+  .group-head b { font-weight: 700; }
+  .group-head span { color: var(--muted); font-size: 0.9375rem; }
+  .ticket { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; flex-wrap: wrap; }
+  .chips { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+  .chip {
+    min-width: 30px; height: 30px; padding: 0 4px; border: 1.5px solid var(--rule); border-radius: 6px; display: inline-grid; place-items: center;
+    font-weight: 700; font-stretch: var(--narrow); font-size: 1rem; line-height: 1; background: var(--paper);
+  }
+  .chip.comp { border-radius: 50%; }
+  .chip.gap { border: 0; background: none; min-width: 6px; padding: 0; }
+  .chip.hit { background: var(--hi); border-color: #D9B800; }
+  .chip.drawn { border-color: var(--ink); }
+  .drawn-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 2px 0 10px; }
+  .drawn-row > span { color: var(--muted); font-size: 0.9375rem; }
+  .verdict { font-size: 0.9375rem; color: var(--muted); }
+  .verdict.win { color: var(--ink); font-weight: 700; }
+  .claim { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 16px; margin: 14px 0 4px; background: var(--hi); border-radius: 8px; }
+  .claim p { margin: 0; font-weight: 650; }
+  .claim small { display: block; font-weight: 400; }
+  .empty { color: var(--muted); padding: 18px 0; margin: 0; max-width: 52ch; }
+
+  footer { margin-top: 56px; padding: 22px 0 40px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.9375rem; }
+  footer p { margin: 0 0 10px; max-width: 72ch; }
+  footer code { font: inherit; word-break: break-all; }
+
+  /* wallet dialog */
+  dialog { border: 0; border-radius: 12px; padding: 22px; width: min(92vw, 400px); color: var(--ink); background: var(--paper); box-shadow: 0 30px 60px -30px rgba(21, 24, 29, 0.6); }
+  dialog::backdrop { background: rgba(21, 24, 29, 0.45); }
+  dialog h2 { font-size: 1.5rem; }
+  dialog .btn { width: 100%; margin-top: 8px; text-align: left; }
+  dialog p { color: var(--muted); font-size: 0.9375rem; margin: 10px 0 0; }
+
+  #toast {
+    position: fixed; left: 16px; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); margin: 0 auto; max-width: 520px;
+    background: var(--ink); color: #fff; padding: 13px 16px; border-radius: 10px; font-weight: 550; z-index: 10;
+  }
+  #toast:empty { display: none; }
+  #toast[data-kind="err"] { background: var(--bad); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="./">Sixte</a>
+    <div class="top-actions">
+      <button class="btn quiet small" id="langBtn" type="button"></button>
+      <button class="btn small" id="connectBtn" type="button"></button>
+    </div>
+  </header>
+
+  <main>
+    <section class="lead">
+      <h1 id="headline" class="num">&nbsp;</h1>
+      <p id="leadSub">&nbsp;</p>
+    </section>
+
+    <div class="layout">
+      <section class="slip" aria-labelledby="slipTitle">
+        <div class="slip-body">
+          <div class="slip-head"><strong id="slipTitle"></strong><span id="slipDraw" class="num"></span></div>
+          <div class="lines" id="lineTabs" role="tablist"></div>
+          <div class="grid-label"><b id="mainLabel"></b><span id="mainCount" class="num"></span></div>
+          <div class="grid main" id="mainGrid"></div>
+          <div class="comp-block">
+            <div class="grid-label"><b id="compLabel"></b><span id="compCount" class="num"></span></div>
+            <div class="grid comp" id="compGrid"></div>
+          </div>
+          <div class="slip-actions">
+            <button class="btn small" id="flashBtn" type="button"></button>
+            <button class="btn small quiet" id="clearBtn" type="button"></button>
+            <button class="btn small quiet" id="flash5Btn" type="button"></button>
+          </div>
+        </div>
+        <hr class="perf">
+        <div class="stub">
+          <div class="stub-row"><span id="stubLines"></span><span class="stub-total num" id="stubTotal"></span></div>
+          <p class="stub-note" id="stubNote"></p>
+          <button class="btn primary" id="buyBtn" type="button"></button>
+          <ol class="steps" id="steps" hidden></ol>
+        </div>
+      </section>
+
+      <aside class="facts">
+        <h2 id="factsTitle"></h2>
+        <dl id="facts"></dl>
+        <h2 id="ranksTitle"></h2>
+        <table>
+          <thead><tr><th id="thCombo"></th><th id="thPrize"></th><th id="thOdds"></th></tr></thead>
+          <tbody id="ranks"></tbody>
+        </table>
+        <p class="fine" id="ranksNote"></p>
+      </aside>
+    </div>
+
+    <section class="below">
+      <div class="tabs" role="tablist">
+        <button class="tab" id="tabMine" role="tab" type="button" aria-selected="true"></button>
+        <button class="tab" id="tabResults" role="tab" type="button" aria-selected="false"></button>
+      </div>
+      <div id="mine"></div>
+      <div id="results" hidden></div>
+    </section>
+  </main>
+
+  <footer>
+    <p id="footIndep"></p>
+    <p id="footRisk"></p>
+    <p><a id="footContract" target="_blank" rel="noopener"></a></p>
+    <p><a id="footVault" href="../"></a></p>
+  </footer>
+</div>
+
+<dialog id="walletDlg">
+  <h2 id="dlgTitle"></h2>
+  <div id="walletList"></div>
+  <p id="dlgHint"></p>
+  <button class="btn quiet" id="dlgClose" type="button"></button>
+</dialog>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="../config.js"></script>
+<script src="../ethers.umd.min.js"></script>
+<script src="../vaultlib.js"></script>
+<script>
+(() => {
+  "use strict";
+  const CFG = window.VAULT_CONFIG;
+  const E = ethers;
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k) { try { return localStorage.getItem("sixte." + k); } catch (_) { return null; } },
+    set(k, v) { try { localStorage.setItem("sixte." + k, v); } catch (_) {} },
+  };
+
+  // ── text ──
+  const TEXT = {
+    fr: {
+      connect: "Connecter", otherLang: "English",
+      morning: "Tirage du matin", evening: "Tirage du soir", inTime: "dans", drawing: "Tirage en cours", noDraw: "Le prochain tirage n'est pas encore ouvert", paused: "La loterie est en pause",
+      leadSub: (n, sold, pool) => `Tirage n° ${n}. ${sold} ticket${sold > 1 ? "s" : ""} joué${sold > 1 ? "s" : ""}, ${pool} WAVAX en jeu pour l'instant.`,
+      leadWait: "Les achats rouvrent dès que le prochain tirage est créé.",
+      slipTitle: "Sixte", slipDraw: (n) => `Tirage n° ${n}`,
+      main: "Numéros", comp: "Compléments", of: (a, b) => `${a} sur ${b}`,
+      flash: "Flash", clear: "Effacer", flash5: "Ajouter 5 grilles flash", addLine: "Ajouter une grille", line: (l) => `Grille ${l}`,
+      stubNone: "Aucune grille complète", stubLines: (n) => `${n} grille${n > 1 ? "s" : ""} complète${n > 1 ? "s" : ""}`,
+      noteConnect: "Connecte un wallet pour payer en WAVAX sur Avalanche.", noteLoading: "Lecture de ton solde…",
+      noteBalance: (w, a) => `Tu as ${w} WAVAX et ${a} AVAX.`,
+      noteWrap: (x) => `Il te manque ${x} WAVAX : ils seront convertis depuis tes AVAX avant l'achat.`,
+      noteShort: "Solde insuffisant pour ces grilles.",
+      noteIncomplete: "Une grille compte quand elle a 6 numéros et 2 compléments.",
+      buyConnect: "Connecter un wallet", buy: (n) => `Acheter ${n} ticket${n > 1 ? "s" : ""}`, buyNone: "Complète une grille",
+      stepWrap: (x) => `Convertir ${x} AVAX en WAVAX`, stepApprove: "Autoriser le paiement", stepBuy: "Acheter les tickets",
+      bought: (n) => `${n} ticket${n > 1 ? "s" : ""} acheté${n > 1 ? "s" : ""}. Bonne chance.`,
+      factsTitle: "Ce tirage", fPool: "En jeu pour l'instant", fSold: "Tickets joués", fPrice: "Prix du ticket", fReserve: "Réserve du jackpot", fMine: "Tes tickets pour ce tirage",
+      ranksTitle: "Ce que gagne chaque rang", thCombo: "Bons numéros", thPrize: "À partager", thOdds: "Chances",
+      oneIn: (n) => `1 sur ${n}`, noRank1: "pas de rang 1 sur ce tirage",
+      ranksNote: "80 % de chaque ticket alimente la cagnotte du tirage, répartie entre les rangs ; les gagnants d'un même rang se la partagent. Les montants sont une estimation qui monte avec les ventes. Un rang sans gagnant est reporté. La loterie retient 3 % à l'encaissement.",
+      tabMine: "Mes tickets", tabResults: "Résultats",
+      mineConnect: "Connecte ton wallet pour voir tes tickets et réclamer tes gains.",
+      mineNone: "Aucun ticket pour l'instant. Coche 6 numéros et 2 compléments sur la grille, ou appuie sur Flash.",
+      drawN: (n) => `Tirage n° ${n}`, inPlay: "en jeu", waiting: "tirage en cours", lost: "pas de gain",
+      won: (r) => `gagné, rang ${r}`, wonAmount: (r, a) => `gagné, rang ${r} : ${a} WAVAX`, claimed: "réclamé",
+      claimTickets: (n) => `${n} ticket${n > 1 ? "s" : ""} gagnant${n > 1 ? "s" : ""} à réclamer`, claimBtn: "Réclamer",
+      cashTitle: (a) => `${a} WAVAX à encaisser`, cashSub: (d) => `3 % de frais de la loterie${d ? `, à encaisser avant le ${d}` : ""}.`, cashBtn: "Encaisser",
+      claimedToast: "Gains réclamés.", cashedToast: (a) => `${a} WAVAX encaissés.`,
+      mismatch: "Un gain semble dû mais sa preuve n'a pas pu être reconstruite ici. Réclame-le depuis le site de la loterie.",
+      resNone: "Aucun tirage terminé pour l'instant.", resLine: (sold, pool) => `${sold} ticket${sold > 1 ? "s" : ""}, ${pool} WAVAX en jeu`, resJackpot: "rang 1 gagné",
+      footIndep: "Sixte est une interface indépendante, sans lien avec BCM DAO. Les tickets sont achetés directement sur le contrat de la loterie AVAX, sans intermédiaire : Sixte ne détient jamais tes fonds.",
+      footRisk: "Jeu d'argent : en moyenne, la mise est perdue. Le contrat de la loterie n'est pas audité. Ne joue que ce que tu peux te permettre de perdre.",
+      footContract: "Voir le contrat de la loterie",
+      dlgTitle: "Connecter un wallet", dlgClose: "Fermer", browserWallet: "Wallet du navigateur", openTrust: "Ouvrir dans Trust Wallet",
+      dlgNoWallet: "Aucun wallet dans ce navigateur. Le bouton rouvre cette page dans l'app Trust Wallet. Sur ordinateur, installe l'extension d'un wallet.",
+      dlgHint: "Réseau : Avalanche C-Chain.",
+      eRejected: "Transaction refusée dans le wallet.", eClosed: "Ce tirage n'accepte plus d'achats.", eNumbers: "Une grille est invalide.", eFunds: "Pas assez d'AVAX pour les frais.",
+      ePay: "Le paiement en WAVAX a échoué.", eNothing: "Rien à encaisser.", ePaused: "La loterie est en pause.", eOther: "Échec : ",
+      drawnLabel: "Numéros sortis", footVault: "Faire jouer le rendement de tes p33 à ta place",
+    },
+    en: {
+      connect: "Connect", otherLang: "Français",
+      morning: "Morning draw", evening: "Evening draw", inTime: "in", drawing: "Draw in progress", noDraw: "The next draw is not open yet", paused: "The lottery is paused",
+      leadSub: (n, sold, pool) => `Draw no. ${n}. ${sold} ticket${sold === 1 ? "" : "s"} played, ${pool} WAVAX in play so far.`,
+      leadWait: "Sales reopen as soon as the next draw is created.",
+      slipTitle: "Sixte", slipDraw: (n) => `Draw no. ${n}`,
+      main: "Numbers", comp: "Extras", of: (a, b) => `${a} of ${b}`,
+      flash: "Quick pick", clear: "Clear", flash5: "Add 5 quick-pick lines", addLine: "Add a line", line: (l) => `Line ${l}`,
+      stubNone: "No complete line", stubLines: (n) => `${n} complete line${n === 1 ? "" : "s"}`,
+      noteConnect: "Connect a wallet to pay in WAVAX on Avalanche.", noteLoading: "Reading your balance…",
+      noteBalance: (w, a) => `You have ${w} WAVAX and ${a} AVAX.`,
+      noteWrap: (x) => `You are ${x} WAVAX short: it will be wrapped from your AVAX before the purchase.`,
+      noteShort: "Not enough balance for these lines.",
+      noteIncomplete: "A line counts once it has 6 numbers and 2 extras.",
+      buyConnect: "Connect a wallet", buy: (n) => `Buy ${n} ticket${n === 1 ? "" : "s"}`, buyNone: "Complete a line",
+      stepWrap: (x) => `Wrap ${x} AVAX into WAVAX`, stepApprove: "Approve the payment", stepBuy: "Buy the tickets",
+      bought: (n) => `${n} ticket${n === 1 ? "" : "s"} bought. Good luck.`,
+      factsTitle: "This draw", fPool: "In play so far", fSold: "Tickets played", fPrice: "Ticket price", fReserve: "Jackpot reserve", fMine: "Your tickets for this draw",
+      ranksTitle: "What each rank wins", thCombo: "Matches", thPrize: "To share", thOdds: "Odds",
+      oneIn: (n) => `1 in ${n}`, noRank1: "no rank 1 on this draw",
+      ranksNote: "80% of each ticket goes to the draw's prize pool, split between the ranks; winners of the same rank share it. Amounts are an estimate that grows with sales. A rank nobody wins rolls over. The lottery keeps 3% when you collect.",
+      tabMine: "My tickets", tabResults: "Results",
+      mineConnect: "Connect your wallet to see your tickets and claim your prizes.",
+      mineNone: "No ticket yet. Mark 6 numbers and 2 extras on the slip, or tap Quick pick.",
+      drawN: (n) => `Draw no. ${n}`, inPlay: "in play", waiting: "draw in progress", lost: "no prize",
+      won: (r) => `won, rank ${r}`, wonAmount: (r, a) => `won, rank ${r}: ${a} WAVAX`, claimed: "claimed",
+      claimTickets: (n) => `${n} winning ticket${n === 1 ? "" : "s"} to claim`, claimBtn: "Claim",
+      cashTitle: (a) => `${a} WAVAX to collect`, cashSub: (d) => `3% lottery fee${d ? `, collect before ${d}` : ""}.`, cashBtn: "Collect",
+      claimedToast: "Prizes claimed.", cashedToast: (a) => `${a} WAVAX collected.`,
+      mismatch: "A prize seems due but its proof could not be rebuilt here. Claim it from the lottery's own site.",
+      resNone: "No finished draw yet.", resLine: (sold, pool) => `${sold} ticket${sold === 1 ? "" : "s"}, ${pool} WAVAX in play`, resJackpot: "rank 1 won",
+      footIndep: "Sixte is an independent interface, not affiliated with BCM DAO. Tickets are bought directly on the AVAX lottery contract, with no intermediary: Sixte never holds your funds.",
+      footRisk: "Gambling: on average the stake is lost. The lottery contract is unaudited. Only play what you can afford to lose.",
+      footContract: "View the lottery contract",
+      dlgTitle: "Connect a wallet", dlgClose: "Close", browserWallet: "Browser wallet", openTrust: "Open in Trust Wallet",
+      dlgNoWallet: "No wallet in this browser. The button reopens this page inside the Trust Wallet app. On a computer, install a wallet extension.",
+      dlgHint: "Network: Avalanche C-Chain.",
+      eRejected: "Transaction rejected in the wallet.", eClosed: "This draw no longer takes purchases.", eNumbers: "A line is invalid.", eFunds: "Not enough AVAX for fees.",
+      ePay: "The WAVAX payment failed.", eNothing: "Nothing to collect.", ePaused: "The lottery is paused.", eOther: "Failed: ",
+      drawnLabel: "Numbers drawn", footVault: "Let the yield of your p33 play for you",
+    },
+  };
+  let lang = store.get("lang") || ((navigator.language || "fr").toLowerCase().startsWith("fr") ? "fr" : "en");
+  let L = TEXT[lang];
+
+  // ── chain ──
+  const LOTTERY_ABI = [
+    "function ticketPrice() view returns (uint256)", "function currentDrawId() view returns (uint256)", "function paused() view returns (bool)",
+    "function getDrawTicketCount(uint256) view returns (uint256)", "function isRun2Mode() view returns (bool)",
+    "function run1RankBps(uint256) view returns (uint16)", "function run2RankBps(uint256) view returns (uint16)", "function rankRollover(uint256) view returns (uint256)",
+    "function jackpotFundAddress() view returns (address)", "function claimable(address) view returns (uint256)", "function claimDeadline(address) view returns (uint256)",
+    "function rootPoseA(uint256) view returns (uint256)", "function ticketPrizeClaimed(uint256) view returns (bool)",
+    "function getOwnerTickets(address) view returns (uint256[])", "function getDrawTickets(uint256) view returns (uint256[])",
+    "function getDraw(uint256) view returns (tuple(uint256 id,uint256 scheduledTime,uint256 drawnAt,uint8[7] winningMain,uint8[2] winningComp,uint256 prizePool,uint256[12] rankPools,uint256 drawVolume,bool isRun2,bool finalized,bool hasRank1Winner,bytes32 merkleRoot))",
+    "function getTicket(uint256) view returns (tuple(uint256 id,uint256 drawId,address owner,uint8[9] mainNumbers,uint8[3] compNumbers,bool isSystemPlay,uint8 systemMainCount,uint8 systemCompCount,uint8 rank,bool claimed,uint256 grossWinAmount))",
+    "function buyMultipleTickets(uint256 drawId, uint8[6][] mainNumsArr, uint8[2][] compNumsArr, bool[] isFlashPick) returns (uint256[])",
+    "function batchClaimTicketPrizes(uint256[] ticketIds, uint8[] ranks, uint256[] amounts, bytes32[][] proofs)",
+    "function claimWinnings()",
+  ];
+  const WAVAX_ABI = [
+    "function balanceOf(address) view returns (uint256)", "function allowance(address,address) view returns (uint256)",
+    "function approve(address,uint256) returns (bool)", "function deposit() payable",
+  ];
+  const A = CFG.addresses;
+  const read = new E.JsonRpcProvider(new URL(CFG.rpcUrl, location.href).href, Number(CFG.chainId), { staticNetwork: true, batchMaxCount: 10 });
+  const lottery = new E.Contract(A.lottery, LOTTERY_ABI, read);
+  const wavax = new E.Contract(A.wavax, WAVAX_ABI, read);
+  const DEFAULT_BPS = [3600, 1000, 850, 650, 530, 420, 350, 280, 420, 415, 655, 830];
+  const GAS_RESERVE = E.parseEther("0.02"); // AVAX left for fees when wrapping
+  const MAX_LINES = 10;
+  const LETTERS = "ABCDEFGHIJ";
+
+  // ── state ──
+  const newLine = () => ({ main: [], comp: [] });
+  const S = {
+    drawId: 0n, draw: null, price: 0n, sold: 0n, paused: false, run2: false, bps: DEFAULT_BPS, roll: Array(12).fill(0n), reserve: null,
+    lines: [newLine()], active: 0, fresh: null,
+    account: null, signer: null, wavax: 0n, avax: 0n, balances: false,
+    tickets: [], draws: new Map(), plan: null, claimable: 0n, deadline: 0n, results: [],
+    busy: false, tab: "mine",
+  };
+  const complete = (l) => l.main.length === 6 && l.comp.length === 2;
+  const isOpen = () => S.draw && !S.paused && S.draw.drawnAt === 0n && Date.now() / 1000 < Number(S.draw.scheduledTime);
+
+  // ── formatting ──
+  function fmt(x, digits = 4) {
+    const [i, f = ""] = E.formatEther(x).split(".");
+    const frac = f.slice(0, digits).replace(/0+$/, "");
+    return Number(i).toLocaleString(lang === "fr" ? "fr-FR" : "en-US") + (frac ? (lang === "fr" ? "," : ".") + frac : "");
+  }
+  const pad = (n) => String(n).padStart(2, "0");
+  function when(ts) {
+    return new Date(Number(ts) * 1000).toLocaleString(lang === "fr" ? "fr-FR" : "en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  }
+  function countdown(sec) {
+    const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    if (d > 0) return `${d} ${lang === "fr" ? "j" : "d"} ${h} h`;
+    if (h > 0) return `${h} h ${pad(m)} min ${pad(s)} s`;
+    return `${m} min ${pad(s)} s`;
+  }
+  const toast = (msg, kind = "") => {
+    const el = $("toast");
+    el.textContent = msg; el.dataset.kind = kind;
+    clearTimeout(toast.t);
+    if (msg) toast.t = setTimeout(() => (el.textContent = ""), kind === "err" ? 9000 : 5000);
+  };
+  function explain(e) {
+    if (e && (e.code === "ACTION_REJECTED" || e.code === 4001)) return L.eRejected;
+    const raw = String((e && (e.reason || e.shortMessage || e.message)) || e);
+    const data = e && (typeof e.data === "string" ? e.data : e.info && e.info.error && e.info.error.data);
+    let code = (raw.match(/\bE\d{2}\b/) || [])[0];
+    if (!code && typeof data === "string" && data.startsWith("0x08c379a0")) {
+      try { code = (E.AbiCoder.defaultAbiCoder().decode(["string"], "0x" + data.slice(10))[0].match(/E\d{2}/) || [])[0]; } catch (_) {}
+    }
+    if (["E05", "E06", "E27", "E28"].includes(code)) return L.eClosed;
+    if (["E29", "E30", "E31", "E32"].includes(code)) return L.eNumbers;
+    if (code === "E58") return L.ePay;
+    if (code === "E15") return L.eNothing;
+    if (/EnforcedPause|paused/i.test(raw)) return L.ePaused;
+    if (/insufficient funds/i.test(raw)) return L.eFunds;
+    return L.eOther + (code || raw.slice(0, 140));
+  }
+
+  // ── ranks: which matches, and the odds of each ──
+  const C = (n, k) => { if (k < 0 || k > n) return 0; let r = 1; for (let i = 1; i <= k; i++) r = (r * (n - k + i)) / i; return Math.round(r); };
+  const RANKS = [];
+  for (let m = 6; m >= 3; m--) for (let c = 2; c >= 0; c--) {
+    // 7 main numbers are drawn out of 24, a line holds 6; 2 extras are drawn out of 5, a line holds 2
+    const p = (C(7, m) * C(17, 6 - m) / C(24, 6)) * (C(2, c) * C(3, 2 - c) / C(5, 2));
+    RANKS.push({ rank: (6 - m) * 3 + (2 - c) + 1, m, c, oneIn: Math.round(1 / p) });
+  }
+
+  // ── rendering ──
+  const PEN = '<svg viewBox="0 0 40 40" aria-hidden="true"><path d="M8 9c7 6 15 15 24 23"/><path d="M32 8C24 16 15 24 9 33"/></svg>';
+  function renderSlip() {
+    const line = S.lines[S.active];
+    $("slipTitle").textContent = L.slipTitle;
+    $("slipDraw").textContent = S.drawId > 0n ? L.slipDraw(S.drawId) : "";
+    $("mainLabel").textContent = L.main; $("compLabel").textContent = L.comp;
+    $("mainCount").textContent = L.of(line.main.length, 6); $("compCount").textContent = L.of(line.comp.length, 2);
+    $("flashBtn").textContent = L.flash; $("clearBtn").textContent = L.clear; $("flash5Btn").textContent = L.flash5;
+    $("flash5Btn").hidden = S.lines.length >= MAX_LINES;
+
+    const tabs = $("lineTabs");
+    tabs.textContent = "";
+    S.lines.forEach((l, i) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "line-tab" + (complete(l) ? " full" : ""); b.textContent = LETTERS[i];
+      b.setAttribute("role", "tab"); b.setAttribute("aria-selected", String(i === S.active)); b.setAttribute("aria-label", L.line(LETTERS[i]));
+      b.onclick = () => { S.active = i; renderSlip(); };
+      tabs.appendChild(b);
+    });
+    if (S.lines.length < MAX_LINES) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "line-tab add"; b.textContent = "+"; b.setAttribute("aria-label", L.addLine);
+      b.onclick = () => { S.lines.push(newLine()); S.active = S.lines.length - 1; renderSlip(); };
+      tabs.appendChild(b);
+    }
+
+    const build = (el, max, picks, limit, kind) => {
+      el.textContent = "";
+      for (let n = 1; n <= max; n++) {
+        const on = picks.includes(n);
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "box"; b.setAttribute("aria-pressed", String(on));
+        b.setAttribute("aria-label", (kind === "main" ? L.main : L.comp) + " " + n);
+        b.style.setProperty("--r", (((n * 37 + (kind === "main" ? 0 : 5)) % 13) - 6) + "deg");
+        b.innerHTML = "<span></span>" + PEN; b.firstChild.textContent = n;
+        if (!on && picks.length >= limit) b.disabled = true;
+        if (S.fresh && S.fresh.kind === kind && S.fresh.n === n) b.classList.add("fresh");
+        b.onclick = () => {
+          const i = picks.indexOf(n);
+          if (i >= 0) { picks.splice(i, 1); S.fresh = null; } else if (picks.length < limit) { picks.push(n); S.fresh = { kind, n }; }
+          renderSlip();
+        };
+        el.appendChild(b);
+      }
+    };
+    build($("mainGrid"), 24, line.main, 6, "main");
+    build($("compGrid"), 5, line.comp, 2, "comp");
+    S.fresh = null;
+    renderStub();
+  }
+
+  function plan() {
+    const n = BigInt(S.lines.filter(complete).length);
+    const cost = n * S.price;
+    const short = cost > S.wavax ? cost - S.wavax : 0n;
+    const canWrap = short > 0n && S.avax >= short + GAS_RESERVE;
+    return { n, cost, short, canWrap, affordable: short === 0n || canWrap };
+  }
+  function renderStub() {
+    const p = plan();
+    $("stubLines").textContent = p.n > 0n ? L.stubLines(Number(p.n)) : L.stubNone;
+    $("stubTotal").textContent = S.price > 0n ? fmt(p.cost) + " WAVAX" : "";
+    const btn = $("buyBtn");
+    let note;
+    if (!S.account) { note = L.noteConnect; btn.textContent = L.buyConnect; btn.disabled = false; }
+    else if (!S.balances) { note = L.noteLoading; btn.textContent = p.n > 0n ? L.buy(Number(p.n)) : L.buyNone; btn.disabled = true; }
+    else {
+      note = L.noteBalance(fmt(S.wavax), fmt(S.avax, 3));
+      if (p.n === 0n) note = L.noteIncomplete + " " + note;
+      else if (!p.affordable) note = L.noteShort + " " + note;
+      else if (p.short > 0n) note = L.noteWrap(fmt(p.short)) + " " + note;
+      btn.textContent = p.n > 0n ? L.buy(Number(p.n)) : L.buyNone;
+      btn.disabled = S.busy || p.n === 0n || !p.affordable || !isOpen();
+    }
+    if (!isOpen() && S.draw) note = (S.paused ? L.paused : L.eClosed) + " " + note;
+    $("stubNote").textContent = note;
+  }
+
+  function renderLead() {
+    const h = $("headline"), sub = $("leadSub");
+    document.documentElement.lang = lang;
+    if (!S.draw) { h.textContent = S.drawId === 0n && S.loaded ? L.noDraw : " "; sub.textContent = S.loaded ? L.leadWait : " "; return; }
+    const left = Number(S.draw.scheduledTime) - Math.floor(Date.now() / 1000);
+    const name = new Date(Number(S.draw.scheduledTime) * 1000).getUTCHours() < 12 ? L.morning : L.evening;
+    if (S.paused) h.textContent = L.paused;
+    else if (S.draw.drawnAt === 0n && left > 0) h.textContent = `${name} ${L.inTime} ${countdown(left)}`;
+    else h.textContent = L.drawing;
+    sub.textContent = L.leadSub(S.drawId, Number(S.sold), fmt(S.draw.prizePool, 2));
+  }
+
+  function renderFacts() {
+    $("factsTitle").textContent = L.factsTitle; $("ranksTitle").textContent = L.ranksTitle;
+    $("thCombo").textContent = L.thCombo; $("thPrize").textContent = L.thPrize; $("thOdds").textContent = L.thOdds;
+    $("ranksNote").textContent = L.ranksNote;
+    const rows = [];
+    if (S.draw) {
+      rows.push([L.fPool, fmt(S.draw.prizePool) + " WAVAX"], [L.fSold, String(S.sold)]);
+      if (S.account) rows.push([L.fMine, String(S.tickets.filter((t) => t.drawId === S.drawId).length)]);
+    }
+    if (S.price > 0n) rows.push([L.fPrice, fmt(S.price) + " WAVAX"]);
+    if (S.reserve !== null) rows.push([L.fReserve, fmt(S.reserve, 2) + " WAVAX"]);
+    const dl = $("facts");
+    dl.textContent = "";
+    for (const [k, v] of rows) {
+      const d = document.createElement("div"), dt = document.createElement("dt"), dd = document.createElement("dd");
+      dt.textContent = k; dd.textContent = v; dd.className = "num"; d.append(dt, dd); dl.appendChild(d);
+    }
+    const body = $("ranks");
+    body.textContent = "";
+    const pool = S.draw ? S.draw.prizePool : 0n;
+    for (const r of RANKS) {
+      const tr = document.createElement("tr");
+      if (r.rank === 1) tr.className = "top-rank";
+      const bps = BigInt(S.bps[r.rank - 1] || 0);
+      const est = (pool * bps) / 10000n + (S.roll[r.rank - 1] || 0n);
+      const cells = [`${r.m} + ${r.c}`, bps === 0n ? L.noRank1 : fmt(est, 3) + " WAVAX", L.oneIn(r.oneIn.toLocaleString(lang === "fr" ? "fr-FR" : "en-US"))];
+      cells.forEach((c, i) => { const td = document.createElement("td"); td.textContent = c; td.className = i === 0 ? "combo" : "num"; tr.appendChild(td); });
+      body.appendChild(tr);
+    }
+  }
+
+  function chips(mains, comps, draw) {
+    const box = document.createElement("div");
+    box.className = "chips";
+    const winM = draw ? new Set(draw.winningMain.map(Number)) : null, winC = draw ? new Set(draw.winningComp.map(Number)) : null;
+    const add = (n, cls, hit) => { const c = document.createElement("span"); c.className = "chip num " + cls + (hit ? " hit" : ""); c.textContent = n; box.appendChild(c); };
+    mains.forEach((n) => add(n, "", winM && winM.has(n)));
+    const gap = document.createElement("span"); gap.className = "chip gap"; gap.textContent = "+"; box.appendChild(gap);
+    comps.forEach((n) => add(n, "comp", winC && winC.has(n)));
+    return box;
+  }
+  function drawnRow(draw) {
+    const row = document.createElement("div"); row.className = "drawn-row";
+    const label = document.createElement("span"); label.textContent = L.drawnLabel;
+    const d = chips(draw.winningMain.map(Number), draw.winningComp.map(Number), null);
+    d.querySelectorAll(".chip:not(.gap)").forEach((c) => c.classList.add("drawn"));
+    row.append(label, d);
+    return row;
+  }
+  const played = (t) => ({
+    mains: Array.from(t.mainNumbers, Number).slice(0, t.isSystemPlay ? Number(t.systemMainCount) : 6),
+    comps: Array.from(t.compNumbers, Number).slice(0, t.isSystemPlay ? Number(t.systemCompCount) : 2),
+  });
+  const executed = (d) => d && d.drawnAt > 0n;
+
+  function renderMine() {
+    $("tabMine").textContent = L.tabMine; $("tabResults").textContent = L.tabResults;
+    const el = $("mine");
+    el.textContent = "";
+    const say = (txt) => { const p = document.createElement("p"); p.className = "empty"; p.textContent = txt; el.appendChild(p); };
+    if (!S.account) return say(L.mineConnect);
+
+    const claims = S.plan ? S.plan.claims : [];
+    if (claims.length) {
+      const bar = document.createElement("div"); bar.className = "claim";
+      const p = document.createElement("p"); p.textContent = L.claimTickets(claims.length);
+      const b = document.createElement("button"); b.className = "btn primary small"; b.id = "claimBtn"; b.textContent = L.claimBtn; b.disabled = S.busy; b.onclick = claimPrizes;
+      bar.append(p, b); el.appendChild(bar);
+    }
+    if (S.claimable > 0n) {
+      const bar = document.createElement("div"); bar.className = "claim";
+      const p = document.createElement("p"); p.textContent = L.cashTitle(fmt(S.claimable));
+      const sm = document.createElement("small"); sm.textContent = L.cashSub(S.deadline > 0n ? when(S.deadline) : ""); p.appendChild(sm);
+      const b = document.createElement("button"); b.className = "btn primary small"; b.id = "cashBtn"; b.textContent = L.cashBtn; b.disabled = S.busy; b.onclick = cashOut;
+      bar.append(p, b); el.appendChild(bar);
+    }
+    if (S.plan && S.plan.mismatchedMine && S.plan.mismatchedMine.length) say(L.mismatch);
+    if (!S.tickets.length) return say(L.mineNone);
+
+    const byDraw = new Map();
+    for (const t of S.tickets) { if (!byDraw.has(t.drawId)) byDraw.set(t.drawId, []); byDraw.get(t.drawId).push(t); }
+    const claimById = new Map(claims.map((c) => [c.id, c]));
+    for (const id of [...byDraw.keys()].sort((a, b) => (a < b ? 1 : -1))) {
+      const draw = S.draws.get(id), done = executed(draw);
+      const g = document.createElement("div"); g.className = "group";
+      const head = document.createElement("div"); head.className = "group-head";
+      const b = document.createElement("b"); b.textContent = L.drawN(id);
+      const sp = document.createElement("span"); sp.className = "num";
+      sp.textContent = draw ? when(done ? draw.drawnAt : draw.scheduledTime) : "";
+      head.append(b, sp); g.appendChild(head);
+      if (done) g.appendChild(drawnRow(draw));
+      for (const t of byDraw.get(id)) {
+        const row = document.createElement("div"); row.className = "ticket";
+        const { mains, comps } = played(t);
+        row.appendChild(chips(mains, comps, done ? draw : null));
+        const v = document.createElement("span"); v.className = "verdict";
+        if (!done) v.textContent = draw && Number(draw.scheduledTime) > Date.now() / 1000 ? L.inPlay : L.waiting;
+        else {
+          const winM = new Set(draw.winningMain.map(Number)), winC = new Set(draw.winningComp.map(Number));
+          const rank = VaultLib.getRank(mains.filter((n) => winM.has(n)).length, comps.filter((n) => winC.has(n)).length, draw.isRun2);
+          const c = claimById.get(t.id);
+          if (t.claimed || t.grossWinAmount > 0n) { v.textContent = L.wonAmount(Number(t.rank) || rank, fmt(t.grossWinAmount)) + ", " + L.claimed; v.classList.add("win"); }
+          else if (c) { v.textContent = L.wonAmount(c.rank, fmt(c.amount)); v.classList.add("win"); }
+          else if (rank > 0 && !t.isSystemPlay) { v.textContent = L.won(rank); v.classList.add("win"); }
+          else v.textContent = L.lost;
+        }
+        row.appendChild(v); g.appendChild(row);
+      }
+      el.appendChild(g);
+    }
+  }
+
+  function renderResults() {
+    const el = $("results");
+    el.textContent = "";
+    if (!S.results.length) { const p = document.createElement("p"); p.className = "empty"; p.textContent = L.resNone; el.appendChild(p); return; }
+    for (const { draw, sold } of S.results) {
+      const g = document.createElement("div"); g.className = "group";
+      const head = document.createElement("div"); head.className = "group-head";
+      const b = document.createElement("b"); b.textContent = L.drawN(draw.id);
+      const sp = document.createElement("span"); sp.className = "num"; sp.textContent = when(draw.drawnAt);
+      head.append(b, sp); g.appendChild(head);
+      g.appendChild(drawnRow(draw));
+      const p = document.createElement("p"); p.className = "fine num";
+      p.textContent = L.resLine(Number(sold), fmt(draw.prizePool, 2)) + (draw.hasRank1Winner ? ", " + L.resJackpot : "") + ".";
+      g.appendChild(p); el.appendChild(g);
+    }
+  }
+
+  function renderChrome() {
+    $("langBtn").textContent = L.otherLang;
+    $("connectBtn").textContent = S.account ? S.account.slice(0, 6) + "…" + S.account.slice(-4) : L.connect;
+    $("footIndep").textContent = L.footIndep; $("footRisk").textContent = L.footRisk;
+    $("footVault").textContent = L.footVault;
+    $("footContract").textContent = L.footContract; $("footContract").href = CFG.explorer + "/address/" + A.lottery;
+    $("dlgTitle").textContent = L.dlgTitle; $("dlgClose").textContent = L.dlgClose;
+    $("tabMine").setAttribute("aria-selected", String(S.tab === "mine")); $("tabResults").setAttribute("aria-selected", String(S.tab === "results"));
+    $("mine").hidden = S.tab !== "mine"; $("results").hidden = S.tab !== "results";
+  }
+  function renderAll() { renderChrome(); renderLead(); renderSlip(); renderFacts(); renderMine(); renderResults(); }
+
+  // ── loading ──
+  const soft = (p, fallback) => p.catch(() => fallback);
+  async function loadDraw() {
+    const [drawId, price, paused] = await Promise.all([lottery.currentDrawId(), lottery.ticketPrice(), soft(lottery.paused(), false)]);
+    S.drawId = drawId; S.price = price; S.paused = paused;
+    if (drawId > 0n) {
+      const [draw, sold, run2] = await Promise.all([lottery.getDraw(drawId), soft(lottery.getDrawTicketCount(drawId), 0n), soft(lottery.isRun2Mode(), false)]);
+      S.draw = draw; S.sold = sold; S.run2 = run2; S.draws.set(drawId, draw);
+    } else S.draw = null;
+    S.loaded = true;
+    renderLead(); renderFacts(); renderStub(); $("slipDraw").textContent = S.drawId > 0n ? L.slipDraw(S.drawId) : "";
+  }
+  async function loadRanks() {
+    const run2 = await soft(lottery.isRun2Mode(), false);
+    const idx = [...Array(12).keys()];
+    const bps = await soft(Promise.all(idx.map((i) => (run2 ? lottery.run2RankBps(i) : lottery.run1RankBps(i)))), null);
+    if (bps) S.bps = bps.map(Number);
+    S.roll = await soft(Promise.all(idx.map((i) => lottery.rankRollover(i + 1))), S.roll);
+    const fund = await soft(lottery.jackpotFundAddress(), null);
+    if (fund && fund !== E.ZeroAddress) S.reserve = await soft(wavax.balanceOf(fund), null);
+    renderFacts();
+  }
+  async function loadResults() {
+    const ids = [];
+    for (let id = S.drawId; id > 0n && ids.length < 9; id--) ids.push(id);
+    const draws = await Promise.all(ids.map((id) => (S.draws.has(id) && executed(S.draws.get(id)) ? S.draws.get(id) : lottery.getDraw(id))));
+    const done = draws.filter(executed).slice(0, 8);
+    done.forEach((d) => S.draws.set(d.id, d));
+    const sold = await Promise.all(done.map((d) => soft(lottery.getDrawTicketCount(d.id), 0n)));
+    S.results = done.map((draw, i) => ({ draw, sold: sold[i] }));
+    renderResults();
+  }
+  async function loadAccount() {
+    if (!S.account) return;
+    const me = S.account;
+    const [w, a, ids, claimable, deadline] = await Promise.all([
+      wavax.balanceOf(me), read.getBalance(me), lottery.getOwnerTickets(me), soft(lottery.claimable(me), 0n), soft(lottery.claimDeadline(me), 0n),
+    ]);
+    S.wavax = w; S.avax = a; S.balances = true; S.claimable = claimable; S.deadline = deadline;
+    const recent = Array.from(ids).slice(-60);
+    S.tickets = (await Promise.all(recent.map((id) => lottery.getTicket(id)))).reverse();
+    const need = [...new Set(S.tickets.map((t) => t.drawId))].filter((id) => !S.draws.has(id) || !executed(S.draws.get(id)));
+    (await Promise.all(need.map((id) => lottery.getDraw(id)))).forEach((d) => S.draws.set(d.id, d));
+    renderStub(); renderFacts(); renderMine();
+    try {
+      const now = BigInt((await read.getBlock("latest")).timestamp);
+      const minDrawId = S.drawId > 60n ? S.drawId - 60n : 0n;
+      S.plan = await VaultLib.planClaims({ lottery, owner: me, now, lookback: 200, minDrawId });
+    } catch (e) { console.error(e); S.plan = null; }
+    renderMine();
+  }
+  async function refresh() {
+    try { await loadDraw(); await Promise.all([loadResults(), loadAccount()]); } catch (e) { console.error(e); }
+  }
+
+  // ── wallet ──
+  const found = new Map();
+  let eip1193 = null;
+  window.addEventListener("eip6963:announceProvider", (ev) => found.set(ev.detail.info.uuid, ev.detail));
+  window.dispatchEvent(new Event("eip6963:requestProvider"));
+  function openWalletDialog() {
+    const box = $("walletList");
+    box.textContent = "";
+    const add = (name, get, primary, id) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "btn" + (primary ? " primary" : ""); b.textContent = name; if (id) b.id = id;
+      b.onclick = async () => { try { await connect(await get()); $("walletDlg").close(); } catch (e) { console.error(e); toast(explain(e), "err"); } };
+      box.appendChild(b);
+    };
+    let i = 0;
+    for (const w of found.values()) add(w.info.name, () => w.provider, i++ === 0);
+    if (!found.size && window.ethereum) add(L.browserWallet, () => window.ethereum, true);
+    if (!found.size && !window.ethereum) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "btn primary"; b.id = "openInTrust"; b.textContent = L.openTrust;
+      b.onclick = () => { location.href = "https://link.trustwallet.com/open_url?coin_id=10009000&url=" + encodeURIComponent(location.href); };
+      box.appendChild(b);
+      $("dlgHint").textContent = L.dlgNoWallet;
+    } else $("dlgHint").textContent = L.dlgHint;
+    $("walletDlg").showModal();
+  }
+  async function ensureChain() {
+    const want = "0x" + Number(CFG.chainId).toString(16);
+    if (Number(await eip1193.request({ method: "eth_chainId" })) === Number(CFG.chainId)) return;
+    try { await eip1193.request({ method: "wallet_switchEthereumChain", params: [{ chainId: want }] }); }
+    catch (e) {
+      if (e.code !== 4902 && !/unrecognized|not been added/i.test(e.message || "")) throw e;
+      await eip1193.request({ method: "wallet_addEthereumChain", params: [{
+        chainId: want, chainName: CFG.chainName, rpcUrls: [CFG.rpcUrl], blockExplorerUrls: [CFG.explorer],
+        nativeCurrency: { name: "Avalanche", symbol: "AVAX", decimals: 18 },
+      }] });
+    }
+  }
+  async function connect(p) {
+    eip1193 = p;
+    const accounts = await eip1193.request({ method: "eth_requestAccounts" });
+    if (!accounts.length) throw new Error("no account");
+    await ensureChain();
+    const provider = new E.BrowserProvider(eip1193, undefined, { cacheTimeout: -1 });
+    S.signer = await provider.getSigner();
+    S.account = await S.signer.getAddress();
+    if (eip1193.on) { eip1193.on("accountsChanged", () => location.reload()); eip1193.on("chainChanged", () => location.reload()); }
+    renderChrome(); renderStub(); renderMine();
+    await loadAccount();
+  }
+
+  // ── actions ──
+  async function withBusy(fn) {
+    if (S.busy) return;
+    S.busy = true; renderStub(); renderMine();
+    try { await fn(); } catch (e) { console.error(e); toast(explain(e), "err"); }
+    finally { S.busy = false; $("steps").hidden = true; renderStub(); renderMine(); }
+  }
+  function showSteps(list, at) {
+    const ol = $("steps");
+    ol.hidden = false; ol.textContent = "";
+    list.forEach((txt, i) => { const li = document.createElement("li"); li.textContent = txt; li.className = i < at ? "done" : i === at ? "doing" : ""; ol.appendChild(li); });
+  }
+  const buy = () => withBusy(async () => {
+    await ensureChain();
+    await loadDraw();
+    const p = plan();
+    if (p.n === 0n) return;
+    if (!isOpen()) throw new Error("E27");
+    const full = S.lines.filter(complete);
+    const mains = full.map((l) => [...l.main].sort((a, b) => a - b)), comps = full.map((l) => [...l.comp].sort((a, b) => a - b));
+    const lot = lottery.connect(S.signer), wav = wavax.connect(S.signer);
+    const allowance = await wavax.allowance(S.account, A.lottery);
+    const steps = [];
+    if (p.short > 0n) steps.push({ label: L.stepWrap(fmt(p.short)), run: () => wav.deposit({ value: p.short }) });
+    if (allowance < p.cost) steps.push({ label: L.stepApprove, run: () => wav.approve(A.lottery, p.cost) });
+    steps.push({ label: L.stepBuy, run: async () => {
+      const args = [S.drawId, mains, comps, full.map(() => false)];
+      await lot.buyMultipleTickets.staticCall(...args); // a refusal shows here, before paying fees
+      return lot.buyMultipleTickets(...args);
+    } });
+    for (let i = 0; i < steps.length; i++) {
+      showSteps(steps.map((s) => s.label), i);
+      await (await steps[i].run()).wait();
+    }
+    S.lines = [newLine()]; S.active = 0;
+    toast(L.bought(Number(p.n)));
+    S.tab = "mine"; renderAll();
+    await refresh();
+  });
+  const claimPrizes = () => withBusy(async () => {
+    await ensureChain();
+    const claims = S.plan.claims;
+    const lot = lottery.connect(S.signer);
+    for (let i = 0; i < claims.length; i += 50) {
+      const c = claims.slice(i, i + 50);
+      await (await lot.batchClaimTicketPrizes(c.map((x) => x.id), c.map((x) => x.rank), c.map((x) => x.amount), c.map((x) => x.proof))).wait();
+    }
+    toast(L.claimedToast);
+    await loadAccount();
+  });
+  const cashOut = () => withBusy(async () => {
+    await ensureChain();
+    const before = await wavax.balanceOf(S.account);
+    await (await lottery.connect(S.signer).claimWinnings()).wait();
+    toast(L.cashedToast(fmt((await wavax.balanceOf(S.account)) - before)));
+    await loadAccount();
+  });
+
+  function randomLine() {
+    const pick = (max, k) => {
+      const out = [];
+      const buf = new Uint32Array(1);
+      while (out.length < k) { crypto.getRandomValues(buf); const n = (buf[0] % max) + 1; if (!out.includes(n)) out.push(n); }
+      return out;
+    };
+    return { main: pick(24, 6), comp: pick(5, 2) };
+  }
+
+  // ── wiring ──
+  $("flashBtn").onclick = () => { S.lines[S.active] = randomLine(); renderSlip(); };
+  $("clearBtn").onclick = () => { S.lines[S.active] = newLine(); renderSlip(); };
+  $("flash5Btn").onclick = () => {
+    S.lines = S.lines.filter((l) => l.main.length || l.comp.length);
+    for (let i = 0; i < 5 && S.lines.length < MAX_LINES; i++) S.lines.push(randomLine());
+    if (!S.lines.length) S.lines.push(newLine());
+    S.active = S.lines.length - 1; renderSlip();
+  };
+  $("buyBtn").onclick = () => (S.account ? buy() : openWalletDialog());
+  $("connectBtn").onclick = () => { if (!S.account) openWalletDialog(); };
+  $("dlgClose").onclick = () => $("walletDlg").close();
+  $("langBtn").onclick = () => { lang = lang === "fr" ? "en" : "fr"; L = TEXT[lang]; store.set("lang", lang); renderAll(); };
+  $("tabMine").onclick = () => { S.tab = "mine"; renderChrome(); };
+  $("tabResults").onclick = () => { S.tab = "results"; renderChrome(); };
+
+  renderAll();
+  refresh().then(loadRanks);
+  setInterval(() => { renderLead(); if (S.draw && S.draw.drawnAt === 0n) renderStub(); }, 1000);
+  setInterval(() => { if (!document.hidden && !S.busy) refresh(); }, 30000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && !S.busy) refresh(); });
+})();
+</script>
+</body>
+</html>

@@ -9,7 +9,8 @@
     "test:web": "node scripts/build.js && node test/e2e.js",
     "deploy": "node scripts/build.js && node scripts/deploy.js",
     "keeper": "node keeper/index.js",
-    "player": "node keeper/player.js"
+    "player": "node keeper/player.js",
+    "test:play": "node scripts/build.js && node test/e2e-play.js"
   },
   "dependencies": {
     "@openzeppelin/contracts": "5.0.2",

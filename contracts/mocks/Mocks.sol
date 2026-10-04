@@ -275,7 +275,10 @@ contract MockLottery {
             uint8[6] memory main;
             uint8[2] memory comp;
             if (isFlashPick[i]) (main, comp) = _flashPick();
-            else (main, comp) = (mainNumsArr[i], compNumsArr[i]);
+            else {
+                (main, comp) = (mainNumsArr[i], compNumsArr[i]);
+                _validate(main, comp);
+            }
 
             ticketCount++;
             Ticket storage t = tickets[ticketCount];
@@ -350,6 +353,46 @@ contract MockLottery {
 
     function getOwnerTickets(address o) external view returns (uint256[] memory) {
         return ownerTickets[o];
+    }
+
+    /// @dev Same rules and error codes as PartnerLotteryCore: range, then duplicates; any order.
+    function _validate(uint8[6] memory main, uint8[2] memory comp) internal pure {
+        bool[25] memory seen;
+        for (uint256 i = 0; i < 6; i++) {
+            require(main[i] >= 1 && main[i] <= 24, "E29");
+            require(!seen[main[i]], "E30");
+            seen[main[i]] = true;
+        }
+        bool[6] memory seenComp;
+        for (uint256 i = 0; i < 2; i++) {
+            require(comp[i] >= 1 && comp[i] <= 5, "E31");
+            require(!seenComp[comp[i]], "E32");
+            seenComp[comp[i]] = true;
+        }
+    }
+
+    // ── read-only views used by the play page ──
+    uint16[12] internal RANK_BPS = [3600, 1000, 850, 650, 530, 420, 350, 280, 420, 415, 655, 830];
+    mapping(uint256 => uint256) public rankRollover; // by rank, 1 to 12
+    address public jackpotFundAddress = address(0xFA11);
+    bool public isRun2Mode;
+    uint256 public claimExpiry = 150 days;
+    mapping(address => uint256) public claimDeadline;
+
+    function run1RankBps(uint256 i) external view returns (uint16) {
+        return RANK_BPS[i];
+    }
+
+    function run2RankBps(uint256 i) external view returns (uint16) {
+        return i == 0 ? 0 : RANK_BPS[i];
+    }
+
+    function getDrawTicketCount(uint256 drawId) external view returns (uint256) {
+        return drawTickets[drawId].length;
+    }
+
+    function setRankRollover(uint256 rank, uint256 amount) external {
+        rankRollover[rank] = amount;
     }
 
     function _flashPick() internal returns (uint8[6] memory main, uint8[2] memory comp) {

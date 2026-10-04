@@ -17,6 +17,7 @@ Web page: `docs/` (GitHub Pages). Everything can be done from a phone, inside a 
 | Vault keeper | `keeper/index.js` | Alternative bot for vaults that buy the tickets themselves |
 | Schedule | `.github/workflows/play.yml` | Runs the player bot before each draw |
 | Web page | `docs/` | Wallet connection, vault creation, deposit, withdrawal, settings, dry run |
+| Play page | `docs/play/` | "Sixte", an independent interface to the lottery itself: pick numbers, buy tickets, see results, claim prizes. No vault needed |
 | Tests | `test/` | Contracts and bots on a local chain, and the page in a real browser |
 
 ## Two ways to play
@@ -147,6 +148,7 @@ The bot can also run anywhere Node.js runs: `cp .env.example .env`, fill it in, 
 npm install
 npm test            # contracts and bots, on a local chain
 npm run test:web    # the page, in Chromium (CHROMIUM = path of the binary)
+npm run test:play   # the play page, same way
 ```
 
 ## What is verified, and what is not
