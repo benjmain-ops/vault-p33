@@ -29,7 +29,7 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   await provider.send("evm_setAccountCode", ["0x4e59b44847b379578588920cA78FbF26c0B4956C", "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"]);
   await (await p33.mint(user.address, E("2500"))).wait();
   const CONFIG = "window.VAULT_CONFIG = " + JSON.stringify({
-    factory: "", chainId: 43114, chainName: "Avalanche C-Chain", rpcUrl: "", explorer: "https://snowscan.xyz", walletConnectProjectId: "",
+    factory: "", chainId: 43114, chainName: "Avalanche C-Chain", rpcUrl: "/rpc", explorer: "https://snowscan.xyz", walletConnectProjectId: "",
     addresses: { p33: p33.target, wavax: wavax.target, lottery: lottery.target, pool: pool.target },
   }) + ";";
 
@@ -109,6 +109,26 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   assert.match(await page.textContent("#iPoolHint"), /bin step 25/);
   await shot("1b-installation");
   assert.equal(await page.inputValue("#iPool"), pool.target, "pool pré-rempli et vérifié");
+
+  // essai à blanc : tout le parcours simulé par un appel en lecture, sans transaction
+  const blockBefore = await provider.getBlockNumber();
+  await page.click("#dryBtn");
+  await statusIs("Simulation terminée"); // aucun tirage ouvert : l'achat échoue, le reste passe
+  assert.match(await page.textContent("#dryOut"), /Vente sur le pool24,9999 p33 → 0,424999 WAVAX/);
+  assert.match(await page.textContent("#dryOut"), /Achat de ticketséchec.*Causeaucun tirage ouvert/);
+  assert.match(await page.textContent("#dryOut"), /Retrait total2\s250 p33 récupérés/);
+  await (await lottery.createDraw(BigInt((await provider.getBlock("latest")).timestamp) + 86400n)).wait();
+  const blockMid = await provider.getBlockNumber();
+  await page.click("#dryBtn");
+  await statusIs("Simulation réussie");
+  const dry = await page.textContent("#dryOut");
+  assert.match(dry, /Cours obtenu0,016999 WAVAX par p33/);
+  assert.match(dry, /Achat de tickets2 ticket\(s\) à 0,19 WAVAX/);
+  assert.equal(await provider.getBlockNumber(), blockMid, "la simulation n'envoie aucune transaction");
+  assert.equal(await p33.balanceOf(user.address), E("2500"), "solde intact");
+  assert.equal(await page.inputValue("#cFloor"), "0.012749", "prix plancher pré-rempli à partir du cours simulé");
+  await shot("1c-simulation");
+  step("essai à blanc contre la chaîne, sans transaction");
   await page.click("#installBtn");
   await page.waitForSelector("#createCard:not([hidden])", { timeout: 60000 });
   const factoryAddr = await page.evaluate(() => localStorage.getItem("p33vault.factory"));

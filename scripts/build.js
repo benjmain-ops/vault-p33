@@ -20,7 +20,7 @@ const input = {
   settings: {
     optimizer: { enabled: true, runs: 200 },
     evmVersion: "shanghai",
-    outputSelection: { "*": { "*": ["abi", "evm.bytecode.object"] } },
+    outputSelection: { "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] } },
   },
 };
 
@@ -55,6 +55,9 @@ console.log("Compilation OK ->", dir);
 const web = path.join(root, "docs");
 const fa = JSON.parse(fs.readFileSync(path.join(dir, "P33LotteryVaultFactory.json"), "utf8"));
 fs.writeFileSync(path.join(web, "factory.js"), "window.FACTORY_ARTIFACT = " + JSON.stringify({ abi: fa.abi, bytecode: fa.bytecode }) + ";\n");
+// Dry run: runtime code injected with an eth_call state override (never deployed).
+const dr = out.contracts["contracts/DryRun.sol"].DryRun;
+fs.writeFileSync(path.join(web, "dryrun.js"), "window.DRYRUN_ARTIFACT = " + JSON.stringify({ abi: dr.abi, runtime: "0x" + dr.evm.deployedBytecode.object }) + ";\n");
 require("esbuild").buildSync({
   entryPoints: [path.join(root, "keeper", "lib.js")],
   bundle: true, minify: true, format: "iife", globalName: "VaultLib", platform: "browser", target: "es2020",
