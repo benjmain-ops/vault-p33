@@ -372,7 +372,7 @@
     fr: {
       connect: "Connecter", otherLang: "English",
       morning: "Tirage du matin", evening: "Tirage du soir", inTime: "dans", drawing: "Tirage en cours", noDraw: "Le prochain tirage n'est pas encore ouvert", paused: "La loterie est en pause",
-      leadSub: (n, sold, pool) => `Tirage n° ${n}. ${sold} ticket${sold > 1 ? "s" : ""} joué${sold > 1 ? "s" : ""}, ${pool} WAVAX en jeu pour l'instant.`,
+      leadSub: (n, sold, pool) => `Tirage n° ${n}. ${sold} ticket${sold > 1 ? "s" : ""} joué${sold > 1 ? "s" : ""}, ${pool} WAVAX à gagner.`,
       leadWait: "Les achats rouvrent dès que le prochain tirage est créé.",
       slipTitle: "Sixte", slipDraw: (n) => `Tirage n° ${n}`,
       main: "Numéros", comp: "Compléments", of: (a, b) => `${a} sur ${b}`,
@@ -386,7 +386,7 @@
       buyConnect: "Connecter un wallet", buy: (n) => `Acheter ${n} ticket${n > 1 ? "s" : ""}`, buyNone: "Complète une grille",
       stepWrap: (x) => `Convertir ${x} AVAX en WAVAX`, stepApprove: "Autoriser le paiement", stepBuy: "Acheter les tickets",
       bought: (n) => `${n} ticket${n > 1 ? "s" : ""} acheté${n > 1 ? "s" : ""}. Bonne chance.`,
-      factsTitle: "Ce tirage", fPool: "En jeu pour l'instant", fSold: "Tickets joués", fPrice: "Prix du ticket", fReserve: "Réserve du jackpot", fMine: "Tes tickets pour ce tirage",
+      factsTitle: "Ce tirage", fTotal: "À gagner, reports compris", fPool: "Dont ventes de ce tirage", fSold: "Tickets joués", fPrice: "Prix du ticket", fReserve: "Réserve du jackpot", fMine: "Tes tickets pour ce tirage",
       ranksTitle: "Ce que gagne chaque rang", thCombo: "Bons numéros", thPrize: "À partager", thOdds: "Chances",
       oneIn: (n) => `1 sur ${n}`, noRank1: "pas de rang 1 sur ce tirage",
       ranksNote: "80 % de chaque ticket alimente la cagnotte du tirage, répartie entre les rangs ; les gagnants d'un même rang se la partagent. Les montants sont une estimation qui monte avec les ventes. Un rang sans gagnant est reporté. La loterie retient 3 % à l'encaissement.",
@@ -415,7 +415,7 @@
     en: {
       connect: "Connect", otherLang: "Français",
       morning: "Morning draw", evening: "Evening draw", inTime: "in", drawing: "Draw in progress", noDraw: "The next draw is not open yet", paused: "The lottery is paused",
-      leadSub: (n, sold, pool) => `Draw no. ${n}. ${sold} ticket${sold === 1 ? "" : "s"} played, ${pool} WAVAX in play so far.`,
+      leadSub: (n, sold, pool) => `Draw no. ${n}. ${sold} ticket${sold === 1 ? "" : "s"} played, ${pool} WAVAX to win.`,
       leadWait: "Sales reopen as soon as the next draw is created.",
       slipTitle: "Sixte", slipDraw: (n) => `Draw no. ${n}`,
       main: "Numbers", comp: "Extras", of: (a, b) => `${a} of ${b}`,
@@ -429,7 +429,7 @@
       buyConnect: "Connect a wallet", buy: (n) => `Buy ${n} ticket${n === 1 ? "" : "s"}`, buyNone: "Complete a line",
       stepWrap: (x) => `Wrap ${x} AVAX into WAVAX`, stepApprove: "Approve the payment", stepBuy: "Buy the tickets",
       bought: (n) => `${n} ticket${n === 1 ? "" : "s"} bought. Good luck.`,
-      factsTitle: "This draw", fPool: "In play so far", fSold: "Tickets played", fPrice: "Ticket price", fReserve: "Jackpot reserve", fMine: "Your tickets for this draw",
+      factsTitle: "This draw", fTotal: "To win, rollovers included", fPool: "Of which this draw's sales", fSold: "Tickets played", fPrice: "Ticket price", fReserve: "Jackpot reserve", fMine: "Your tickets for this draw",
       ranksTitle: "What each rank wins", thCombo: "Matches", thPrize: "To share", thOdds: "Odds",
       oneIn: (n) => `1 in ${n}`, noRank1: "no rank 1 on this draw",
       ranksNote: "80% of each ticket goes to the draw's prize pool, split between the ranks; winners of the same rank share it. Amounts are an estimate that grows with sales. A rank nobody wins rolls over. The lottery keeps 3% when you collect.",
@@ -706,6 +706,8 @@
     $("stubNote").textContent = note;
   }
 
+  // what this draw can pay: its own pool plus what earlier draws left unwon in each rank
+  const totalPool = () => (S.draw ? S.draw.prizePool : 0n) + S.roll.reduce((a, x) => a + x, 0n);
   function renderLead() {
     const h = $("headline"), sub = $("leadSub");
     document.documentElement.lang = lang;
@@ -715,7 +717,7 @@
     if (S.paused) setHeadline(L.paused);
     else if (S.draw.drawnAt === 0n && left > 0) setHeadline(`${name} ${L.inTime} ${countdown(left)}`);
     else setHeadline(L.drawing);
-    sub.textContent = L.leadSub(S.drawId, Number(S.sold), fmt(S.draw.prizePool, 2));
+    sub.textContent = L.leadSub(S.drawId, Number(S.sold), fmt(totalPool(), 2));
   }
 
   function renderFacts() {
@@ -724,7 +726,7 @@
     $("ranksNote").textContent = L.ranksNote;
     const rows = [];
     if (S.draw) {
-      rows.push(["pool", L.fPool, fmt(S.draw.prizePool) + " WAVAX"], ["sold", L.fSold, String(S.sold)]);
+      rows.push(["total", L.fTotal, fmt(totalPool(), 2) + " WAVAX"], ["pool", L.fPool, fmt(S.draw.prizePool) + " WAVAX"], ["sold", L.fSold, String(S.sold)]);
       if (S.account) rows.push(["mine", L.fMine, String(S.tickets.filter((t) => t.drawId === S.drawId).length)]);
     }
     if (S.price > 0n) rows.push(["price", L.fPrice, fmt(S.price) + " WAVAX"]);
@@ -917,7 +919,7 @@
     S.roll = await soft(Promise.all(idx.map((i) => lottery.rankRollover(i + 1))), S.roll);
     const fund = await soft(lottery.jackpotFundAddress(), null);
     if (fund && fund !== E.ZeroAddress) S.reserve = await soft(wavax.balanceOf(fund), null);
-    renderFacts();
+    renderFacts(); renderLead();
   }
   async function loadResults() {
     const ids = [];
