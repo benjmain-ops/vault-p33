@@ -1,13 +1,14 @@
 # Results bot: publishes each draw of the AVAX lottery to a Telegram chat. See README, "Results bot".
 # Read-only on the chain: this workflow holds no wallet key.
 #
-# Draws are at 06:00 and 18:00 UTC. Two runs after each draw: the second one only publishes if
-# the first one did not (the cache remembers which draw was published).
+# Draws are at 06:00 and 18:00 UTC and are executed within seconds. Three runs after each draw:
+# a later one only publishes if the earlier ones did not (the cache remembers which draw was
+# published). GitHub often starts scheduled runs late, hence the spares.
 name: results
 
 on:
   schedule:
-    - cron: "23 6,7,18,19 * * *"
+    - cron: "1,5,35 6,18 * * *"
   workflow_dispatch:
     inputs:
       force:
