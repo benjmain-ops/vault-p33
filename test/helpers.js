@@ -12,6 +12,7 @@ async function deploy(name, signer, ...args) {
 }
 
 /** Full environment: tokens, router, lottery, factory, one vault for `owner`. */
+// `reinvest`: false = winnings set aside; true = cap of 100 WAVAX; or an explicit cap (bigint).
 async function setup({ reinvest = false } = {}) {
   const gp = ganache.provider({
     logging: { quiet: true },
@@ -34,7 +35,7 @@ async function setup({ reinvest = false } = {}) {
   await (await wavax.mint(player.address, E("100"))).wait();
 
   // floor price 0.015 WAVAX per p33, ticket price capped at 0.5 WAVAX
-  await (await factory.connect(owner).createVault(E("0.015"), E("0.5"), reinvest)).wait();
+  await (await factory.connect(owner).createVault(E("0.015"), E("0.5"), reinvest ? (reinvest === true ? E("100") : reinvest) : 0n)).wait();
   const vaultAddr = (await factory.vaultsOf(owner.address))[0];
   const vault = new ethers.Contract(vaultAddr, art("P33LotteryVault").abi, owner);
 

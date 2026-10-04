@@ -20,6 +20,8 @@ contract P33LotteryVaultFactory {
     address public immutable defaultKeeper;
 
     address[] public allVaults;
+    /// @notice True for every vault created by this factory.
+    mapping(address => bool) public isVault;
     mapping(address => address[]) internal _vaultsOf;
 
     event VaultCreated(address indexed owner, address vault);
@@ -38,7 +40,7 @@ contract P33LotteryVaultFactory {
         defaultKeeper = defaultKeeper_;
     }
 
-    function createVault(uint256 minWavaxPerP33, uint256 maxTicketPrice, bool reinvestWinnings)
+    function createVault(uint256 minWavaxPerP33, uint256 maxTicketPrice, uint256 reinvestCap)
         external
         returns (address vault)
     {
@@ -52,10 +54,11 @@ contract P33LotteryVaultFactory {
                 pool,
                 minWavaxPerP33,
                 maxTicketPrice,
-                reinvestWinnings
+                reinvestCap
             )
         );
         allVaults.push(vault);
+        isVault[vault] = true;
         _vaultsOf[msg.sender].push(vault);
         emit VaultCreated(msg.sender, vault);
     }

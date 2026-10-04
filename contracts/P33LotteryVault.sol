@@ -32,7 +32,7 @@ interface IBcmLottery {
         uint8[6][] calldata mainNumsArr,
         uint8[2][] calldata compNumsArr,
         bool[] calldata isFlashPick
-    ) external returns (uint256[] memory ticketIds);
+    ) external; // return value deliberately not declared: nothing here depends on its shape
 
     function batchClaimTicketPrizes(
         uint256[] calldata ticketIds,
@@ -59,8 +59,8 @@ interface IBcmLottery {
  *  - principalAssets : principal expressed in xPHAR (the asset of p33). As long as the ratio rises,
  *    less and less p33 is needed to cover it; the difference is the yield.
  *  - ticketBudget : WAVAX reserved for buying tickets (coming from the harvests).
- *  - The WAVAX beyond ticketBudget is made up of winnings; it is only played again if
- *    reinvestWinnings is enabled.
+ *  - The WAVAX beyond ticketBudget is made up of winnings; it is only played again up to
+ *    reinvestCap per collection, so a large prize is never replayed down to zero.
  */
 contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -85,21 +85,26 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
     uint256 public minWavaxPerP33;
     /// @notice Maximum price accepted for a ticket. 0 = purchase blocked.
     uint256 public maxTicketPrice;
-    /// @notice If true, the collected winnings go back into the ticket budget.
-    bool public reinvestWinnings;
+    /// @notice Maximum WAVAX moved from collected winnings back into the ticket budget, per
+    ///         collection. 0 = winnings are never played again.
+    uint256 public reinvestCap;
+
+    /// @dev Upper bound for the floor price, so that amount * floor cannot overflow.
+    uint256 internal constant MAX_FLOOR = 1e36;
 
     event Deposited(uint256 shares, uint256 assets);
     event Withdrawn(address indexed to, uint256 shares);
     event Harvested(uint256 p33Sold, uint256 wavaxReceived);
     event TicketsBought(uint256 indexed drawId, uint256 count, uint256 cost);
     event PrizesClaimed(uint256 ticketCount);
-    event WinningsCollected(uint256 amount, bool reinvested);
+    event WinningsCollected(uint256 amount, uint256 reinvested);
     event BudgetFunded(uint256 amount);
     event WavaxWithdrawn(address indexed to, uint256 amount);
     event KeeperSet(address keeper);
     event GuardsSet(uint256 minWavaxPerP33, uint256 maxTicketPrice);
     event PoolSet(address pool);
-    event ReinvestSet(bool enabled);
+    event ReinvestCapSet(uint256 cap);
+    event Rescued(address indexed token, address indexed to, uint256 amount);
 
     error NotOperator();
     error ZeroAddress();
@@ -113,6 +118,10 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
     error ProtectedToken();
     error WrongPool();
     error OnlySelf();
+    error InvalidRecipient();
+    error GuardTooHigh();
+    error LotteryUnavailable();
+    error RenounceDisabled();
 
     modifier onlyOperator() {
         if (msg.sender != keeper && msg.sender != owner()) revert NotOperator();
@@ -128,7 +137,7 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
         address pool_,
         uint256 minWavaxPerP33_,
         uint256 maxTicketPrice_,
-        bool reinvestWinnings_
+        uint256 reinvestCap_
     ) Ownable(owner_) {
         if (p33_ == address(0) || wavax_ == address(0) || lottery_ == address(0)) {
             revert ZeroAddress();
@@ -139,9 +148,15 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
         lottery = IBcmLottery(lottery_);
         keeper = keeper_;
         _setPool(pool_);
+        if (minWavaxPerP33_ > MAX_FLOOR) revert GuardTooHigh();
         minWavaxPerP33 = minWavaxPerP33_;
         maxTicketPrice = maxTicketPrice_;
-        reinvestWinnings = reinvestWinnings_;
+        reinvestCap = reinvestCap_;
+    }
+
+    /// @dev Renouncing ownership would lock every withdrawal forever: disabled.
+    function renounceOwnership() public pure override {
+        revert RenounceDisabled();
     }
 
     // ──────────────────────────────── Owner ─────────────────────────────────
@@ -157,7 +172,7 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
 
     /// @notice Withdraws p33. The principal decreases by the value withdrawn.
     function withdraw(uint256 shares, address to) external onlyOwner nonReentrant {
-        if (to == address(0)) revert ZeroAddress();
+        if (to == address(0) || to == address(this)) revert InvalidRecipient();
         if (shares == 0) revert ZeroAmount();
         uint256 assets = IP33(address(p33)).convertToAssets(shares);
         principalAssets = assets >= principalAssets ? 0 : principalAssets - assets;
@@ -167,7 +182,7 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
 
     /// @notice Withdraws all the p33 and resets the principal to zero.
     function withdrawAll(address to) external onlyOwner nonReentrant {
-        if (to == address(0)) revert ZeroAddress();
+        if (to == address(0) || to == address(this)) revert InvalidRecipient();
         uint256 shares = p33.balanceOf(address(this));
         principalAssets = 0;
         p33.safeTransfer(to, shares);
@@ -175,8 +190,10 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
     }
 
     /// @notice Withdraws WAVAX (winnings first, then ticket budget if the amount exceeds them).
+    ///         Pass type(uint256).max to withdraw the whole WAVAX balance.
     function withdrawWavax(uint256 amount, address to) external onlyOwner nonReentrant {
-        if (to == address(0)) revert ZeroAddress();
+        if (to == address(0) || to == address(this)) revert InvalidRecipient();
+        if (amount == type(uint256).max) amount = wavax.balanceOf(address(this));
         wavax.safeTransfer(to, amount);
         uint256 bal = wavax.balanceOf(address(this));
         if (ticketBudget > bal) ticketBudget = bal;
@@ -198,6 +215,7 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
 
     /// @notice Guards: swap floor price and maximum ticket price.
     function setGuards(uint256 minWavaxPerP33_, uint256 maxTicketPrice_) external onlyOwner {
+        if (minWavaxPerP33_ > MAX_FLOOR) revert GuardTooHigh();
         minWavaxPerP33 = minWavaxPerP33_;
         maxTicketPrice = maxTicketPrice_;
         emit GuardsSet(minWavaxPerP33_, maxTicketPrice_);
@@ -208,15 +226,18 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
         _setPool(pool_);
     }
 
-    function setReinvestWinnings(bool enabled) external onlyOwner {
-        reinvestWinnings = enabled;
-        emit ReinvestSet(enabled);
+    /// @notice Sets how much of each collection of winnings is played again (0 = none).
+    function setReinvestCap(uint256 cap) external onlyOwner {
+        reinvestCap = cap;
+        emit ReinvestCapSet(cap);
     }
 
     /// @notice Recovers a token sent by mistake (neither p33 nor WAVAX, which have their own exits).
     function rescue(address token_, uint256 amount, address to) external onlyOwner {
         if (token_ == address(p33) || token_ == address(wavax)) revert ProtectedToken();
+        if (to == address(0) || to == address(this)) revert InvalidRecipient();
         IERC20(token_).safeTransfer(to, amount);
+        emit Rescued(token_, to, amount);
     }
 
     // ─────────────────────────────── Views ──────────────────────────────────
@@ -373,7 +394,15 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
     }
 
     function _buy(uint256 maxTickets, bool strict) internal returns (uint256 n) {
-        uint256 price = lottery.ticketPrice();
+        // The lottery is an external contract: in tolerant mode, none of its failures may
+        // block the rest of the cycle, not even a reverting view.
+        uint256 price;
+        try lottery.ticketPrice() returns (uint256 p) {
+            price = p;
+        } catch {
+            if (strict) revert LotteryUnavailable();
+            return 0;
+        }
         if (price > maxTicketPrice) {
             if (strict) revert TicketPriceTooHigh(price, maxTicketPrice);
             return 0;
@@ -386,7 +415,13 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
             return 0;
         }
 
-        uint256 drawId = lottery.currentDrawId();
+        uint256 drawId;
+        try lottery.currentDrawId() returns (uint256 d) {
+            drawId = d;
+        } catch {
+            if (strict) revert LotteryUnavailable();
+            return 0;
+        }
         uint8[6][] memory mains = new uint8[6][](n);
         uint8[2][] memory comps = new uint8[2][](n);
         bool[] memory flash = new bool[](n);
@@ -404,19 +439,27 @@ contract P33LotteryVault is Ownable2Step, ReentrancyGuard {
         }
         wavax.forceApprove(address(lottery), 0);
 
-        uint256 spent = before - wavax.balanceOf(address(this));
-        ticketBudget -= spent;
+        // Trust the balance. The clamps keep the accounting safe even if the lottery misbehaves.
+        uint256 afterBal = wavax.balanceOf(address(this));
+        uint256 spent = before > afterBal ? before - afterBal : 0;
+        ticketBudget = spent >= ticketBudget ? 0 : ticketBudget - spent;
         emit TicketsBought(drawId, n, spent);
     }
 
     function _collect() internal returns (uint256 received) {
-        if (lottery.claimable(address(this)) == 0) return 0;
+        try lottery.claimable(address(this)) returns (uint256 pending) {
+            if (pending == 0) return 0;
+        } catch {
+            return 0;
+        }
         uint256 before = wavax.balanceOf(address(this));
         try lottery.claimWinnings() {} catch {
             return 0;
         }
-        received = wavax.balanceOf(address(this)) - before;
-        if (reinvestWinnings) ticketBudget += received;
-        emit WinningsCollected(received, reinvestWinnings);
+        uint256 afterBal = wavax.balanceOf(address(this));
+        received = afterBal > before ? afterBal - before : 0;
+        uint256 reinvested = received < reinvestCap ? received : reinvestCap;
+        ticketBudget += reinvested;
+        emit WinningsCollected(received, reinvested);
     }
 }

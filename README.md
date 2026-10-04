@@ -24,7 +24,7 @@ Garde-fous réglés par le propriétaire :
 
 - `minWavaxPerP33` : prix plancher de vente du rendement. À 0, la vente est bloquée.
 - `maxTicketPrice` : prix maximum d'un ticket. Le prix est modifiable par une clé chaude côté BCM ; ce plafond évite qu'un prix anormal vide le budget.
-- `reinvestWinnings` : rejouer ou non les gains. Désactivé par défaut : les gains restent de côté.
+- `reinvestCap` : montant maximum de gains rejoué à chaque encaissement (0 = rien n'est rejoué). Un gros gain n'est donc jamais rejoué en entier.
 
 ## Tout faire depuis le téléphone (sans ordinateur ni robot)
 
@@ -53,8 +53,7 @@ cp .env.example .env
 ### 1. Déployer la factory (une seule fois) — ou le faire depuis la page, voir plus haut
 
 ```bash
-npm run deploy                    # liste les pools p33/WAVAX et leur tickSpacing
-TICK_SPACING=<valeur> npm run deploy
+npm run deploy                    # utilise le pool DLMM p33/WAVAX par défaut (variable POOL pour en changer)
 ```
 
 Renseigner d'abord dans `.env` : `DEPLOYER_PRIVATE_KEY`, et `KEEPER_ADDRESS` (l'adresse publique

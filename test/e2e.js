@@ -116,7 +116,7 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   await statusIs("Simulation terminée"); // aucun tirage ouvert : l'achat échoue, le reste passe
   assert.match(await page.textContent("#dryOut"), /Vente sur le pool24,9999 p33 → 0,424999 WAVAX/);
   assert.match(await page.textContent("#dryOut"), /Achat de ticketséchec.*Causeaucun tirage ouvert/);
-  assert.match(await page.textContent("#dryOut"), /Retrait total2\s250 p33 récupérés/);
+  assert.match(await page.textContent("#dryOut"), /Cycle en une transactionOK.*Retrait total2\s250 p33 et 0,42\d+ WAVAX récupérés/);
   await (await lottery.createDraw(BigInt((await provider.getBlock("latest")).timestamp) + 86400n)).wait();
   const blockMid = await provider.getBlockNumber();
   await page.click("#dryBtn");
@@ -185,6 +185,42 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   await statusIs("Rien à faire pour l'instant");
   step("message clair quand il n'y a rien à faire");
 
+  // 5 a. essai à blanc avec un petit solde : 1 % ne couvre pas un ticket, la page rejoue avec assez
+  await (await p33.mint(stranger.address, E("15"))).wait();
+  const small = await browser.newPage({ viewport: { width: 390, height: 844 }, locale: "fr-FR" });
+  await small.addInitScript(INIT, stranger.address.toLowerCase());
+  await small.goto(url);
+  await small.click("#walletList button");
+  await small.waitForSelector("#createCard:not([hidden])");
+  await small.click("#dryBtn");
+  await small.waitForFunction(() => document.getElementById("status").textContent.includes("Simulation réussie"), null, { timeout: 60000 });
+  assert.match(await small.textContent("#dryOut"), /Achat de tickets1 ticket\(s\) à 0,19 WAVAX/);
+  assert.match(await small.textContent("#dryOut"), /Rendement nécessaire par ticket≈ 11,1 p33/);
+  // solde trop faible pour financer un ticket : le reste est validé, l'achat est signalé comme non simulé
+  await (await p33.connect(stranger).transfer(deployer.address, E("14"))).wait();
+  await small.click("#dryBtn");
+  await small.waitForFunction(() => document.getElementById("status").textContent.includes("solde p33 trop faible"), null, { timeout: 60000 });
+  assert.match(await small.textContent("#dryOut"), /Achat de ticketsnon simulé/);
+  assert.equal(await p33.balanceOf(stranger.address), E("1"));
+  await small.close();
+  step("essai à blanc : achat simulé avec un petit solde, message clair si le solde est trop faible");
+
+  // 5 a bis. liens piégés : une factory ou un vault inconnus sont refusés avant toute signature
+  const fake = await deploy("P33LotteryVaultFactory", deployer, p33.target, wavax.target, lottery.target, pool.target, keeper.address);
+  const trap = await browser.newPage({ viewport: { width: 390, height: 844 }, locale: "fr-FR" });
+  await trap.addInitScript(INIT, stranger.address.toLowerCase());
+  await trap.goto(`${base}/?factory=${fake.target}`);
+  await trap.click("#walletList button");
+  await trap.waitForFunction(() => document.getElementById("status").textContent.includes("Factory non reconnue"), null, { timeout: 60000 });
+  assert.equal(await trap.isHidden("#dash"), true);
+  assert.equal(await trap.isHidden("#createCard"), true);
+  await trap.goto(`${base}/?vault=${pool.target}`);
+  await trap.click("#walletList button");
+  await trap.waitForFunction(() => document.getElementById("status").textContent.includes("Vault non reconnu"), null, { timeout: 60000 });
+  assert.equal(await trap.isHidden("#dash"), true);
+  await trap.close();
+  step("liens piégés refusés (fausse factory, faux vault)");
+
   // 5 bis. un autre wallet ouvre ce vault : lecture seule, retrait refusé par le contrat
   const other = await browser.newPage({ viewport: { width: 390, height: 844 }, locale: "fr-FR" });
   await other.addInitScript(INIT, stranger.address.toLowerCase());
@@ -228,7 +264,7 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   assert.equal(await vault.minWavaxPerP33(), E("0.012"));
   await page.check("#sReinvest");
   await statusIs("Réglage des gains : fait.");
-  assert.equal(await vault.reinvestWinnings(), true);
+  assert.equal(await vault.reinvestCap(), E("3.8"), "plafond : 10 tickets au prix maximum");
   step("réglages");
 
   // 7. retrait total : le p33 revient au wallet, principal intact malgré la vente du rendement

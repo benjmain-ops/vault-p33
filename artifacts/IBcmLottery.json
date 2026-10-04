@@ -52,13 +52,7 @@
         }
       ],
       "name": "buyMultipleTickets",
-      "outputs": [
-        {
-          "internalType": "uint256[]",
-          "name": "ticketIds",
-          "type": "uint256[]"
-        }
-      ],
+      "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
     },

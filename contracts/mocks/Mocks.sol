@@ -110,8 +110,9 @@ contract MockLottery {
     }
 
     IERC20 public immutable token;
-    uint256 public ticketPrice;
-    uint256 public currentDrawId;
+    uint256 internal _ticketPrice;
+    uint256 internal _currentDrawId;
+    bool public broken; // when set, the views revert
     uint256 public ticketCount;
     bool public paused;
 
@@ -120,19 +121,38 @@ contract MockLottery {
     mapping(uint256 => uint256[]) internal drawTickets;
     mapping(address => uint256[]) internal ownerTickets;
     mapping(uint256 => bool) public ticketPrizeClaimed;
-    mapping(address => uint256) public claimable;
+    mapping(address => uint256) internal _claimable;
     mapping(uint256 => uint256) public drawRemaining;
     mapping(uint256 => uint256) public rootPoseA;
     uint256 private nonce;
 
     constructor(address token_, uint256 price) {
         token = IERC20(token_);
-        ticketPrice = price;
+        _ticketPrice = price;
+    }
+
+    function setBroken(bool b) external {
+        broken = b;
+    }
+
+    function ticketPrice() public view returns (uint256) {
+        require(!broken, "broken");
+        return _ticketPrice;
+    }
+
+    function currentDrawId() public view returns (uint256) {
+        require(!broken, "broken");
+        return _currentDrawId;
+    }
+
+    function claimable(address a) external view returns (uint256) {
+        require(!broken, "broken");
+        return _claimable[a];
     }
 
     // ── test helpers ──
     function setTicketPrice(uint256 p) external {
-        ticketPrice = p;
+        _ticketPrice = p;
     }
 
     function setPaused(bool p) external {
@@ -140,10 +160,10 @@ contract MockLottery {
     }
 
     function createDraw(uint256 scheduledTime) external returns (uint256) {
-        currentDrawId++;
-        draws[currentDrawId].id = currentDrawId;
-        draws[currentDrawId].scheduledTime = scheduledTime;
-        return currentDrawId;
+        _currentDrawId++;
+        draws[_currentDrawId].id = _currentDrawId;
+        draws[_currentDrawId].scheduledTime = scheduledTime;
+        return _currentDrawId;
     }
 
     function setResult(uint256 drawId, uint8[7] calldata main, uint8[2] calldata comp, uint256[12] calldata pools)
@@ -205,7 +225,7 @@ contract MockLottery {
             ticketIds[i] = ticketCount;
         }
 
-        uint256 cost = ticketPrice * n;
+        uint256 cost = _ticketPrice * n;
         uint256 before = token.balanceOf(address(this));
         token.transferFrom(msg.sender, address(this), cost);
         require(token.balanceOf(address(this)) - before == cost, "E58");
@@ -238,14 +258,14 @@ contract MockLottery {
             ticketPrizeClaimed[id] = true;
             t.rank = ranks[i];
             t.grossWinAmount = amounts[i];
-            claimable[msg.sender] += amounts[i];
+            _claimable[msg.sender] += amounts[i];
         }
     }
 
     function claimWinnings() external {
-        uint256 gross = claimable[msg.sender];
+        uint256 gross = _claimable[msg.sender];
         require(gross > 0, "E15");
-        claimable[msg.sender] = 0;
+        _claimable[msg.sender] = 0;
         token.transfer(msg.sender, gross - (gross * 300) / 10_000);
     }
 

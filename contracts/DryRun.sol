@@ -18,14 +18,16 @@ contract DryRun {
     struct Report {
         bool created; // factory + vault deployed
         bool deposited; // p33 deposited, principal recorded
-        bool swapped; // yield sold on the pool
+        bool swapped; // yield sold on the pool through harvest()
+        bool cycled; // remaining yield sold through cycle(): covers the lottery views and the self-call swap
         uint256 p33Sold;
         uint256 wavaxOut;
         bool bought; // tickets bought on the lottery
         uint256 ticketPrice;
         uint256 tickets;
-        bool withdrawn; // everything withdrawn back
+        bool withdrawn; // p33 and WAVAX withdrawn back
         uint256 p33Back;
+        uint256 wavaxBack;
         bytes error; // revert data of the first failing step
     }
 
@@ -38,7 +40,7 @@ contract DryRun {
         P33LotteryVault v;
         try new P33LotteryVaultFactory(p33, wavax, lottery, pool, address(0)) returns (P33LotteryVaultFactory f) {
             // floor of 1 wei so the sale is never refused: the point is to observe the real price
-            try f.createVault(1, type(uint256).max, false) returns (address a) {
+            try f.createVault(1, type(uint256).max, 0) returns (address a) {
                 v = P33LotteryVault(a);
                 r.created = true;
             } catch (bytes memory e) {
@@ -58,19 +60,36 @@ contract DryRun {
             return r;
         }
 
+        // Half of the simulated yield goes through harvest() (strict: a failure gives its reason),
+        // the other half through cycle(), the path used in normal operation.
         IERC20(p33).transfer(address(v), yieldAmount);
-        r.p33Sold = v.harvestable();
-        try v.harvest(r.p33Sold, 0) returns (uint256 out) {
+        uint256 half = v.harvestable() / 2;
+        try v.harvest(half, 0) returns (uint256 out) {
             r.swapped = true;
+            r.p33Sold = half;
             r.wavaxOut = out;
         } catch (bytes memory e) {
             r.error = e;
         }
 
+        uint256[] memory noIds;
+        uint8[] memory noRanks;
+        bytes32[][] memory noProofs;
+        uint256 rest = v.harvestable();
+        try v.cycle(type(uint256).max, 0, 0, noIds, noRanks, noIds, noProofs) returns (uint256 harvested, uint256, uint256) {
+            if (harvested > 0) {
+                r.cycled = true;
+                r.p33Sold += rest;
+                r.wavaxOut += harvested;
+            }
+        } catch (bytes memory e) {
+            if (r.error.length == 0) r.error = e;
+        }
+
         try v.lottery().ticketPrice() returns (uint256 price) {
             r.ticketPrice = price;
         } catch {}
-        if (r.swapped) {
+        if (r.swapped || r.cycled) {
             try v.buyTickets(50) returns (uint256 n) {
                 r.bought = true;
                 r.tickets = n;
@@ -79,10 +98,16 @@ contract DryRun {
             }
         }
 
-        uint256 before = IERC20(p33).balanceOf(address(this));
+        uint256 p33Before = IERC20(p33).balanceOf(address(this));
+        uint256 wavaxBefore = IERC20(wavax).balanceOf(address(this));
         try v.withdrawAll(address(this)) {
-            r.withdrawn = true;
-            r.p33Back = IERC20(p33).balanceOf(address(this)) - before;
+            try v.withdrawWavax(type(uint256).max, address(this)) {
+                r.withdrawn = true;
+            } catch (bytes memory e) {
+                if (r.error.length == 0) r.error = e;
+            }
+            r.p33Back = IERC20(p33).balanceOf(address(this)) - p33Before;
+            r.wavaxBack = IERC20(wavax).balanceOf(address(this)) - wavaxBefore;
         } catch (bytes memory e) {
             if (r.error.length == 0) r.error = e;
         }

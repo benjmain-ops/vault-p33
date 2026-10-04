@@ -16,7 +16,7 @@ test("factory: the caller is the owner, the factory has no rights", async () => 
   assert.equal(await s.vault.minWavaxPerP33(), E("0.015"));
   assert.equal(await s.vault.maxTicketPrice(), E("0.5"));
 
-  await (await s.factory.connect(s.player).createVault(E("0.015"), E("0.5"), true)).wait();
+  await (await s.factory.connect(s.player).createVault(E("0.015"), E("0.5"), E("1"))).wait();
   const v2 = (await s.factory.vaultsOf(s.player.address))[0];
   assert.notEqual(v2, s.vault.target);
   assert.equal(await new ethers.Contract(v2, s.vault.interface, s.provider).owner(), s.player.address);
@@ -240,7 +240,7 @@ test("full cycle by the keeper: harvest, purchase, draw, Merkle proofs, 97% coll
   assert.equal(await s.vault.ticketBudget(), budgetBefore);
 });
 
-test("winnings replayed when reinvestWinnings is enabled", async () => {
+test("winnings replayed when a reinvest cap is set", async () => {
   const s = await setup({ reinvest: true });
   await (await s.wavax.mint(s.owner.address, E("1"))).wait();
   await (await s.wavax.connect(s.owner).approve(s.vault.target, E("1"))).wait();
@@ -377,4 +377,85 @@ test("swap pool: only the owner can change it, and only to a p33/WAVAX pool", as
   assert.equal(await s.vault.pool(), other.target);
   await expectRevert(s.vault.connect(s.stranger).swapForCycle(1, 0), sel("OnlySelf()"));
   await expectRevert(s.vault.swapForCycle(1, 0), sel("OnlySelf()"));
+});
+
+test("reinvest cap: a large prize is replayed only up to the cap, the rest is set aside", async () => {
+  const s = await setup({ reinvest: E("0.5") });
+  await (await s.wavax.mint(s.owner.address, E("1"))).wait();
+  await (await s.wavax.connect(s.owner).approve(s.vault.target, E("1"))).wait();
+  await (await s.vault.fundBudget(E("0.19"))).wait();
+  const drawId = await s.openDraw(3600n);
+  await (await s.vault.connect(s.keeper).buyTickets(1)).wait();
+  const [id] = await s.lottery.getOwnerTickets(s.vault.target);
+  const t1 = await s.lottery.getTicket(id);
+  const main6 = t1.mainNumbers.slice(0, 6).map(Number);
+  const seventh = [...Array(24).keys()].map((i) => i + 1).find((n) => !main6.includes(n));
+  const pools = Array(12).fill(0n);
+  pools[0] = E("500"); // jackpot
+  await s.warp(3700n);
+  await (await s.lottery.setResult(drawId, [...main6, seventh], t1.compNumbers.slice(0, 2).map(Number), pools)).wait();
+  const tree = lib.buildTree([{ id, owner: s.vault.target, rank: 1, amount: E("500") }]);
+  await (await s.lottery.setMerkleRoot(drawId, tree.root)).wait();
+  await s.warp(16n * 60n);
+  const p = lib.proofsFor(tree, s.vault.target)[0];
+  await (await s.vault.connect(s.keeper).claimPrizes([p.id], [p.rank], [p.amount], [p.proof])).wait();
+  assert.equal(await s.vault.ticketBudget(), E("0.5"), "only the cap goes back into the budget");
+  assert.equal(await s.vault.winnings(), E("485") - E("0.5"), "the rest of the 485 WAVAX is out of the keeper's reach");
+  await (await s.vault.setReinvestCap(0)).wait();
+  assert.equal(await s.vault.reinvestCap(), 0n);
+});
+
+test("owner safety: ownership cannot be renounced, funds cannot be withdrawn into the vault itself, guards are bounded", async () => {
+  const s = await setup();
+  await s.depositP33(E("1000"));
+  await expectRevert(s.vault.renounceOwnership(), sel("RenounceDisabled()"));
+  assert.equal(await s.vault.owner(), s.owner.address);
+  await expectRevert(s.vault.withdrawAll(s.vault.target), sel("InvalidRecipient()"));
+  await expectRevert(s.vault.withdraw(E("1"), s.vault.target), sel("InvalidRecipient()"));
+  await expectRevert(s.vault.withdrawWavax(0, s.vault.target), sel("InvalidRecipient()"));
+  assert.equal(await s.vault.principalAssets(), E("1000"), "principal untouched by the rejected calls");
+  await expectRevert(s.vault.setGuards(ethers.MaxUint256, E("0.5")), sel("GuardTooHigh()"));
+
+  // withdrawWavax(max) takes the whole balance, whatever the budget is
+  await (await s.wavax.mint(s.owner.address, E("2"))).wait();
+  await (await s.wavax.connect(s.owner).approve(s.vault.target, E("2"))).wait();
+  await (await s.vault.fundBudget(E("2"))).wait();
+  await (await s.vault.withdrawWavax(ethers.MaxUint256, s.owner.address)).wait();
+  assert.equal(await s.wavax.balanceOf(s.vault.target), 0n);
+  assert.equal(await s.vault.ticketBudget(), 0n);
+
+  // transfer of ownership is two-step: the new owner must accept
+  await (await s.vault.transferOwnership(s.player.address)).wait();
+  assert.equal(await s.vault.owner(), s.owner.address);
+  await (await s.vault.connect(s.player).acceptOwnership()).wait();
+  assert.equal(await s.vault.owner(), s.player.address);
+});
+
+test("cycle: a lottery whose views revert does not block the sale of the yield, nor the withdrawals", async () => {
+  const s = await setup();
+  const k = s.vault.connect(s.keeper);
+  await s.depositP33(E("1000"));
+  await (await s.p33.setRatio(E("1.02"))).wait();
+  await s.openDraw(3600n);
+  await (await s.lottery.setBroken(true)).wait();
+
+  const h = await s.vault.harvestable();
+  await (await k.cycle(ethers.MaxUint256, 0, 50, [], [], [], [])).wait();
+  assert.equal(await s.vault.harvestable(), 0n, "yield sold despite the broken lottery");
+  assert.equal(await s.vault.ticketBudget(), (h * E("0.017")) / E("1"));
+  await expectRevert(k.buyTickets(1), sel("LotteryUnavailable()"));
+  await (await k.collectWinnings()).wait(); // no-op, does not revert
+
+  const before = await s.p33.balanceOf(s.owner.address);
+  await (await s.vault.withdrawAll(s.owner.address)).wait();
+  assert.ok((await s.p33.convertToAssets((await s.p33.balanceOf(s.owner.address)) - before)) >= E("1000"));
+  await (await s.vault.withdrawWavax(ethers.MaxUint256, s.owner.address)).wait();
+  assert.equal(await s.wavax.balanceOf(s.vault.target), 0n);
+});
+
+test("factory registry: isVault is true only for vaults it created", async () => {
+  const s = await setup();
+  assert.equal(await s.factory.isVault(s.vault.target), true);
+  assert.equal(await s.factory.isVault(s.stranger.address), false);
+  assert.equal(await s.factory.isVault(s.pool.target), false);
 });
