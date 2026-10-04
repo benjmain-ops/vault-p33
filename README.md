@@ -158,7 +158,8 @@ own site. It only reads the chain.
 
 Optional: `ANNOUNCE_LANG` (`fr` by default, or `en`), `ANNOUNCE_TZ` (time zone of the dates,
 `Europe/Paris` by default), `PLAY_URL` (address behind the "play" button; by default the lottery's
-own site, `none` to remove the button).
+own site, `none` to remove the button), `ANNOUNCE_PREVIEW` (`off` to post without the link's
+preview card).
 
 Telegram requires Mini Apps that use crypto-assets to be built on TON only. This bot is not a
 Mini App, it only posts messages; whether a link to an Avalanche page is welcome in your channel

@@ -133,11 +133,11 @@ function chatId(value) {
   throw new Error("ANNOUNCE_CHAT is not a channel name: expected @name, a t.me/name link or a numeric id");
 }
 
-async function send({ token, chat, text, playUrl, lang = "fr", api = "https://api.telegram.org" }) {
+async function send({ token, chat, text, playUrl, preview = true, lang = "fr", api = "https://api.telegram.org" }) {
   const L = TEXT[lang] || TEXT.fr;
   const body = { chat_id: chat, text, parse_mode: "HTML" };
   if (playUrl) {
-    body.link_preview_options = { is_disabled: true };
+    body.link_preview_options = preview ? { url: playUrl, prefer_large_media: true } : { is_disabled: true };
     body.reply_markup = { inline_keyboard: [[{ text: L.play(new URL(playUrl).hostname.replace(/^www\./, "")), url: playUrl }]] };
   } else body.link_preview_options = { is_disabled: true };
   const res = await fetch(`${api}/bot${token}/sendMessage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -179,7 +179,7 @@ async function main() {
   const playUrl = env.PLAY_URL === "none" ? "" : (env.PLAY_URL || OFFICIAL_SITE).trim();
   if (env.DRY_RUN === "1") return console.log(text.replace(/<\/?b>/g, ""));
   if (!env.ANNOUNCE_BOT_TOKEN || !env.ANNOUNCE_CHAT) return console.log("Not configured: add the ANNOUNCE_BOT_TOKEN and ANNOUNCE_CHAT secrets (README, Results bot).");
-  await send({ token: env.ANNOUNCE_BOT_TOKEN.trim(), chat: chatId(env.ANNOUNCE_CHAT), text, playUrl, lang, api: env.TELEGRAM_API });
+  await send({ token: env.ANNOUNCE_BOT_TOKEN.trim(), chat: chatId(env.ANNOUNCE_CHAT), text, playUrl, preview: env.ANNOUNCE_PREVIEW !== "off", lang, api: env.TELEGRAM_API });
   if (env.PUBLISHED_FILE) fs.writeFileSync(env.PUBLISHED_FILE, draw.id.toString() + "\n"); // lets the workflow remember this draw
   console.log("published");
 }
