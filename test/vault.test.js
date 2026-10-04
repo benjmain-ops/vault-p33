@@ -184,12 +184,14 @@ test("ranks: table identical to PartnerLotteryCore", () => {
   assert.equal(lib.getRank(6, 1, true), 2);
 });
 
-test("harvest window: closed from Thursday 00:00 to Friday 01:00 UTC", () => {
+test("harvest window: closed from Thursday 00:00 to Saturday 00:00 UTC", () => {
   const thu = 1791417600n; // Thursday 2026-10-08 00:00 UTC
   assert.equal(thu % 604800n, 0n);
   assert.equal(lib.inHarvestWindow(thu + 3600n), false); // Thursday 01:00, buyback in progress
-  assert.equal(lib.inHarvestWindow(thu + 86400n + 1800n), false); // Friday 00:30, margin
-  assert.equal(lib.inHarvestWindow(thu + 86400n + 3600n), true); // Friday 01:00
+  assert.equal(lib.inHarvestWindow(thu + 86400n + 3600n), false); // Friday 01:00, buyback still running
+  assert.equal(lib.inHarvestWindow(thu + 86400n + 20n * 3600n), false); // Friday 20:00, late step possible
+  assert.equal(lib.inHarvestWindow(thu + 2n * 86400n - 1n), false); // Friday 23:59:59
+  assert.equal(lib.inHarvestWindow(thu + 2n * 86400n), true); // Saturday 00:00
   assert.equal(lib.inHarvestWindow(thu + 6n * 86400n), true); // Wednesday 00:00
   assert.equal(lib.inHarvestWindow(thu + 604800n - 3600n), false); // 1 h before the flip
 });

@@ -51,7 +51,7 @@ async function planHarvest(ctx, vault) {
   const none = { amount: 0n, minOut: 0n };
   const harvestable = await vault.harvestable();
   if (harvestable < cfg.minHarvest) return none;
-  if (!inHarvestWindow(now)) return cfg.log(`  harvest: outside the window (TWAP buyback in progress or flip approaching)`), none;
+  if (!inHarvestWindow(now)) return cfg.log(`  harvest: outside the window (yield still compounding until Saturday 00:00 UTC, or flip approaching)`), none;
   let quoted;
   try {
     quoted = await vault.harvest.staticCall(harvestable, 0n);

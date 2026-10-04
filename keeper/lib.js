@@ -102,12 +102,14 @@ function proofsFor(tree, owner) {
 
 /**
  * Harvest window. Pharaoh epochs flip on Thursday 00:00 UTC (the Unix epoch
- * started on a Thursday); the p33 ratio rises during the 24 h TWAP buyback that follows.
- * So we only sell from Friday 00:00 UTC onwards, plus a margin.
+ * started on a Thursday). The p33 ratio then rises in steps: measured on chain for the
+ * 2026-09-24 epoch, the buyback ran about 26 h and a last step landed on Friday 19:15 UTC,
+ * after which the ratio stayed flat. So we only sell from Saturday 00:00 UTC (flip + 48 h),
+ * to sell a complete week of yield in one go.
  */
-function inHarvestWindow(timestamp, marginSeconds = 3600n) {
+function inHarvestWindow(timestamp, marginSeconds = 0n) {
   const sinceFlip = BigInt(timestamp) % WEEK;
-  return sinceFlip >= DAY + BigInt(marginSeconds) && sinceFlip < WEEK - 2n * 3600n;
+  return sinceFlip >= 2n * DAY + BigInt(marginSeconds) && sinceFlip < WEEK - 2n * 3600n;
 }
 
 const ZERO_ROOT = "0x" + "0".repeat(64);

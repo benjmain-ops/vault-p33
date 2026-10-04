@@ -34,7 +34,7 @@ Garde-fous réglés par le propriétaire :
    p33/WAVAX, tu signes une transaction, c'est fait une fois pour toutes. Elle affiche ensuite
    un lien `?factory=0x…` à partager : chaque personne qui l'ouvre crée son propre vault.
 4. Créer son vault, déposer son p33.
-5. Une fois par semaine (à partir du vendredi), ou quand tu veux : **« Lancer le cycle
+5. Une fois par semaine (à partir du samedi), ou quand tu veux : **« Lancer le cycle
    maintenant »**. Une transaction réclame et encaisse les gains, vend le rendement et achète
    les tickets. La page calcule elle-même les preuves des tickets gagnants.
 
@@ -84,8 +84,9 @@ En cron, deux passages par jour suffisent, par exemple :
 15 7,19 * * *  cd /chemin/p33-lottery-vault && npm run keeper run >> keeper.log 2>&1
 ```
 
-Le robot ne vend le rendement qu'entre le vendredi 01:00 UTC et le mercredi 22:00 UTC : le
-ratio p33 monte pendant les 24 h qui suivent le changement d'epoch du jeudi 00:00 UTC. À chaque
+Le robot ne vend le rendement qu'entre le samedi 00:00 UTC et le mercredi 22:00 UTC : après
+le changement d'epoch du jeudi 00:00 UTC, le ratio p33 monte par paliers jusqu'au vendredi soir
+(mesuré on-chain sur l'epoch du 24 septembre 2026 : dernier palier le vendredi à 19:15 UTC). À chaque
 passage, il envoie **une transaction `cycle` par vault** : gains réclamés et encaissés, rendement
 vendu, tickets achetés. Une étape impossible (cours sous le plancher, tirage clos, loterie en
 pause) est sautée sans bloquer les autres. Des transactions supplémentaires ne suivent que s'il
