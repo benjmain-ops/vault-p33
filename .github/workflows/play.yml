@@ -49,12 +49,36 @@ jobs:
           KEEP_TICKETS: ${{ vars.KEEP_TICKETS }}
           SHOW_AMOUNTS: ${{ vars.SHOW_AMOUNTS }}
           DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+          RECAP_FILE: ${{ runner.temp }}/recap.txt
+          # a manual run always produces a recap, which also tests the notification
+          RECAP_ALWAYS: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
         run: |
           if [ -z "$PLAYER_PRIVATE_KEY" ] || [ -z "$VAULT" ]; then
             echo "Not configured: add the PLAYER_PRIVATE_KEY and VAULT secrets (README, Automatic play)."
             exit 0
           fi
           node keeper/player.js
+
+      # Private recap of the pass (tickets bought, prizes, problems), sent to a Telegram chat.
+      # This step has the bot token of the chat, not the wallet key. The answer of the API
+      # is discarded: it contains the name of the chat.
+      - name: Notify
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RECAP_FILE: ${{ runner.temp }}/recap.txt
+        run: |
+          if [ ! -s "$RECAP_FILE" ]; then echo "Nothing to report."; exit 0; fi
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "No notification channel configured (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)."
+          elif curl -fsS --max-time 20 -o /dev/null "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+                 --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text@${RECAP_FILE}" 2>/dev/null; then
+            echo "Notification sent."
+          else
+            echo "Notification not sent: check the two Telegram secrets, and that you wrote to the bot once."
+          fi
+          rm -f "$RECAP_FILE"
 
       # GitHub disables scheduled workflows of public repositories after 60 days without
       # repository activity. Re-enabling the workflow counts as activity for that timer.

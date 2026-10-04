@@ -98,11 +98,28 @@ claims and collects the prizes of the wallet's tickets; sends prize money above 
 balance to the vault; unwraps a little WAVAX when AVAX for fees runs low; buys the tickets of
 the current draw. About once a day it also sends a pass that only keeps the vault's reference
 price close to the market. Every step is idempotent, so the schedule runs twice before each
-draw. A run that hits a problem fails, and GitHub notifies the repository owner by e-mail.
+draw. A run that hits a problem is marked as failed.
 
 Every transaction the bot signs goes to the vault named in `VAULT` or to the lottery and WAVAX
 contracts pinned in its code: an RPC endpoint that lies can make a pass fail, not send funds
 elsewhere.
+
+### Recap on Telegram
+
+GitHub's own notifications only say that a run succeeded or failed, and for a scheduled workflow
+they do not reliably reach the repository owner. The bot therefore sends its own message, only
+when something happened: yield sold, tickets bought, prizes claimed, money put aside in the
+vault, or a problem. The message is private, so it includes the amounts (never an address).
+
+1. In Telegram, talk to **@BotFather**, send `/newbot`, and keep the token it gives you.
+2. Send any message to your new bot: a bot can only write to someone who wrote to it first.
+3. Open `https://api.telegram.org/bot<token>/getUpdates` in a browser and read your chat id, the
+   number in `"chat":{"id":…}`.
+4. Add two more repository secrets: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
+
+A manual run (**Run workflow**) always sends a recap, which is the way to test the setup. If no
+message arrives for a draw while the wallet still has funds, the schedule is not running: check
+the Actions tab.
 
 Things to know:
 
@@ -116,8 +133,8 @@ Things to know:
 - Tickets bought by the vault itself before switching to player mode are claimed from the page
   ("run the cycle now"), not by this bot.
 - GitHub disables scheduled workflows on public repositories after 60 days without activity.
-  The workflow re-enables itself at each run; if GitHub disables it anyway, it sends an e-mail
-  and one tap turns it back on.
+  The workflow re-enables itself at each run; if GitHub disables it anyway, the recaps stop, and
+  one tap in the Actions tab turns it back on.
 - Scheduled runs can start late when GitHub is busy. That is why they are planned two to three
   hours before each draw.
 

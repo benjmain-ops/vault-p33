@@ -4,7 +4,7 @@ const { ethers } = require("ethers");
 const { setup, expectRevert, sel, E } = require("./helpers");
 const lib = require("../keeper/lib");
 const { runVault, makeContext } = require("../keeper/index");
-const { runPlayer, ticketsToBuy, clean } = require("../keeper/player");
+const { runPlayer, ticketsToBuy, clean, recap } = require("../keeper/player");
 
 const quiet = { log: () => {} };
 
@@ -768,4 +768,28 @@ test("player bot: a prize whose proof cannot be rebuilt is reported, nothing is 
   assert.equal(r.claimed, 0);
   assert.ok(r.problems.some((p) => p.includes("claim it by hand")), JSON.stringify(r.problems));
   assert.equal(await s.lottery.ticketPrizeClaimed(id), false);
+});
+
+test("player bot: private recap of a pass, empty when nothing happened", async () => {
+  const s = await setup({ playerMode: true });
+  const cfg = { log: () => {}, ticketsPerDraw: 2n };
+  await (await s.wavax.mint(s.player.address, E("1"))).wait();
+  await s.openDraw(3600n);
+  let r = await runPlayer({ signer: s.player, vaultAddress: s.vault.target, cfg });
+  const text = recap(r);
+  assert.match(text, /^p33 vault · player bot\n/);
+  assert.match(text, /Tickets: 2 bought at 0\.1900 WAVAX for draw 1 \(2 held\)/);
+  assert.match(text, /Player wallet: 0\.6200 WAVAX \(3 ticket\(s\)\), \d+\.\d{4} AVAX for fees/);
+  assert.ok(!/0x[0-9a-fA-F]{8}/.test(text), "no address in the recap");
+
+  // second run before the same draw: nothing happened, no message; a manual run reports the state
+  r = await runPlayer({ signer: s.player, vaultAddress: s.vault.target, cfg });
+  assert.equal(recap(r), "");
+  assert.match(recap(r, { always: true }), /Nothing to do on this pass\.\nTickets held for draw 1: 2\nPlayer wallet: 0\.6200 WAVAX/);
+
+  // a problem is always reported
+  r = await runPlayer({ signer: s.player, vaultAddress: s.vault.target, cfg: { ...cfg, maxFeeGwei: 0n } });
+  assert.match(recap(r), /⚠ network fees unusually high/);
+  r = await runPlayer({ signer: s.player, vaultAddress: s.vault.target, cfg: { ...cfg, dryRun: true } });
+  assert.match(recap(r, { always: true }), /\(dry run, nothing sent\)/);
 });

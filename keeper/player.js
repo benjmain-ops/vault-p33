@@ -19,7 +19,10 @@
  * Every transaction goes to the vault given in the configuration, or to the lottery and
  * WAVAX contracts pinned below: nothing read from the RPC can redirect funds elsewhere.
  * The logs never contain an address or a transaction hash, so they can be public.
+ * A private recap (with amounts) is written to RECAP_FILE when something happened; the
+ * scheduled workflow sends it to a Telegram chat from a step that never sees the wallet key.
  */
+const fs = require("fs");
 const { ethers } = require("ethers");
 const lib = require("./lib");
 
@@ -145,7 +148,11 @@ async function runPlayer({ signer, vaultAddress, cfg: userCfg }) {
   const provider = signer.provider;
   const me = await signer.getAddress();
   const vault = new ethers.Contract(vaultAddress, VAULT_ABI, signer);
-  const report = { sold: 0n, received: 0n, claimed: 0, collected: 0n, bought: 0n, swept: 0n, lowGas: false, problems: [] };
+  const report = {
+    sold: 0n, received: 0n, claimed: 0, collected: 0n, bought: 0n, swept: 0n, lowGas: false, problems: [],
+    // for the private recap only
+    dryRun: cfg.dryRun, drawId: 0n, held: null, price: 0n, wavax: null, gas: null, drawsToCheck: [],
+  };
   const problem = (msg) => (report.problems.push(clean(msg)), log(`  ⚠ ${msg}`));
   // One transaction at a time, each one mined before the next. If a send fails, the signer's
   // nonce counter is reset so that the next transaction is not queued behind a gap.
@@ -257,6 +264,7 @@ async function runPlayer({ signer, vaultAddress, cfg: userCfg }) {
     if (claims.length) log(`prizes: ${claims.length} winning ticket(s) to claim`);
     // A prize seems due but the lottery's own computation differs from ours: nothing is sent,
     // and the run is reported so that somebody looks at it. The prize stays claimable.
+    report.drawsToCheck = mismatchedMine;
     for (const d of mismatchedMine) {
       problem(`${cfg.showAmounts ? `draw ${d}` : "a recent draw"}: a prize seems due but its proof could not be rebuilt, claim it by hand with the player wallet`);
     }
@@ -319,6 +327,7 @@ async function runPlayer({ signer, vaultAddress, cfg: userCfg }) {
       const mine = BigInt(tickets.filter((t) => t.drawId === drawId).length);
       const balance = await wavax.balanceOf(me);
       const n = ticketsToBuy({ affordable: balance / price, mine, scheduledTime: draw.scheduledTime, fixed: cfg.ticketsPerDraw });
+      report.held = mine;
       if (n === 0n) log(mine > 0n ? `tickets: ${mine} already held for this draw` : `tickets: not enough WAVAX for a ticket (${fmt(balance)} WAVAX, price ${fmt(price)})`);
       else if (cfg.dryRun) log(`  (dry run) would buy ${n} ticket(s) at ${fmt(price)} WAVAX`);
       else {
@@ -329,6 +338,7 @@ async function runPlayer({ signer, vaultAddress, cfg: userCfg }) {
         await lottery.buyMultipleTickets.staticCall(...args); // a refusal is caught here, before paying gas
         await send("ticket purchase", () => lottery.buyMultipleTickets(...args));
         report.bought = n;
+        report.held = mine + n;
         log(`tickets: ${n} bought at ${fmt(price)} WAVAX (${mine + n} for this draw)`);
       }
     }
@@ -337,7 +347,46 @@ async function runPlayer({ signer, vaultAddress, cfg: userCfg }) {
   }
 
   if (report.lowGas) problem(`gas too low and no WAVAX to convert: send a little AVAX to the player wallet`);
+  try {
+    report.drawId = drawId;
+    report.price = price;
+    [report.wavax, report.gas] = await Promise.all([wavax.balanceOf(me), provider.getBalance(me)]);
+  } catch {}
   return report;
+}
+
+/**
+ * Private recap of a pass, for the wallet's owner (amounts included, still no address).
+ * Empty when nothing worth a message happened, unless `always` is set.
+ */
+function recap(report, { always = false } = {}) {
+  const f = (x) => Number(ethers.formatEther(x)).toFixed(4);
+  const lines = [];
+  if (report.sold > 0n) lines.push(`Yield sold: ${f(report.sold)} p33 for ${f(report.received)} WAVAX`);
+  else if (report.received > 0n) lines.push(`Received from the vault: ${f(report.received)} WAVAX`);
+  if (report.claimed > 0 || report.collected > 0n) lines.push(`Prizes: ${report.claimed} winning ticket(s) claimed, ${f(report.collected)} WAVAX collected`);
+  if (report.swept > 0n) lines.push(`Put aside in the vault: ${f(report.swept)} WAVAX`);
+  if (report.bought > 0n) lines.push(`Tickets: ${report.bought} bought at ${f(report.price)} WAVAX for draw ${report.drawId} (${report.held} held)`);
+  for (const p of report.problems) lines.push(`⚠ ${p}`);
+  if (report.drawsToCheck.length) lines.push(`Draw(s) to check by hand: ${report.drawsToCheck.join(", ")}`);
+  if (!lines.length) {
+    if (!always) return "";
+    lines.push("Nothing to do on this pass.");
+    if (report.held !== null) lines.push(`Tickets held for draw ${report.drawId}: ${report.held}`);
+  }
+  if (report.wavax !== null) {
+    const tickets = report.price > 0n ? ` (${report.wavax / report.price} ticket(s))` : "";
+    lines.push(`Player wallet: ${f(report.wavax)} WAVAX${tickets}, ${f(report.gas)} AVAX for fees`);
+  }
+  return [`p33 vault · player bot${report.dryRun ? " (dry run, nothing sent)" : ""}`, ...lines].join("\n");
+}
+
+function writeRecap(text) {
+  const file = process.env.RECAP_FILE;
+  if (!file || !text) return;
+  try {
+    fs.writeFileSync(file, text + "\n", { mode: 0o600 });
+  } catch {}
 }
 
 async function main() {
@@ -379,17 +428,20 @@ async function main() {
       showAmounts: !env.GITHUB_ACTIONS || env.SHOW_AMOUNTS === "1",
     },
   });
+  writeRecap(recap(report, { always: env.RECAP_ALWAYS === "1" }));
   console.log(report.problems.length ? `done, ${report.problems.length} problem(s)` : "done");
-  // A non-zero exit makes the scheduler report the run as failed (GitHub then sends an e-mail).
+  // A non-zero exit makes the scheduler report the run as failed.
   if (report.problems.length) process.exit(1);
 }
 
 if (require.main === module) {
   main().catch((e) => {
     // Never print the full error: it can contain addresses and transaction data.
-    console.error(`stopped: ${clean(e.shortMessage || String(e.message).split("(")[0])}`);
+    const msg = `stopped: ${clean(e.shortMessage || String(e.message).split("(")[0])}`;
+    console.error(msg);
+    writeRecap(`p33 vault · player bot\n⚠ ${msg}`);
     process.exit(1);
   });
 }
 
-module.exports = { runPlayer, ticketsToBuy, clean };
+module.exports = { runPlayer, ticketsToBuy, clean, recap };
