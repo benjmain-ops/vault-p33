@@ -13,6 +13,7 @@ const { ethers } = require("ethers");
 const lib = require("./lib");
 
 const LOTTERY = "0xB49a551aecD96b60a121Fc9996C2812e9BF95186"; // PartnerLotteryCore, Avalanche C-Chain
+const OFFICIAL_SITE = "https://bcmdao.io/avax-lottery";
 const RPC_URLS = ["https://api.avax.network/ext/bc/C/rpc", "https://avalanche-c-chain-rpc.publicnode.com"];
 const LOTTERY_ABI = [
   "function ticketPrice() view returns (uint256)",
@@ -33,7 +34,7 @@ const TEXT = {
     none: "Aucun ticket gagnant : les lots sont reportés sur les prochains tirages.",
     next: (when, pool, price) => `Prochain tirage ${when} : ${pool} WAVAX déjà en jeu, ticket à ${price} WAVAX.`,
     notOpen: "Le prochain tirage n'est pas encore ouvert.",
-    play: "Jouer sur Sixte",
+    play: (site) => `Jouer sur ${site}`,
     at: "à",
   },
   en: {
@@ -46,7 +47,7 @@ const TEXT = {
     none: "No winning ticket: the prizes roll over to the next draws.",
     next: (when, pool, price) => `Next draw ${when}: ${pool} WAVAX in play already, ticket at ${price} WAVAX.`,
     notOpen: "The next draw is not open yet.",
-    play: "Play on Sixte",
+    play: (site) => `Play on ${site}`,
     at: "at",
   },
 };
@@ -136,8 +137,8 @@ async function send({ token, chat, text, playUrl, lang = "fr", api = "https://ap
   const L = TEXT[lang] || TEXT.fr;
   const body = { chat_id: chat, text, parse_mode: "HTML" };
   if (playUrl) {
-    body.link_preview_options = { url: playUrl, prefer_large_media: true };
-    body.reply_markup = { inline_keyboard: [[{ text: L.play, url: playUrl }]] };
+    body.link_preview_options = { is_disabled: true };
+    body.reply_markup = { inline_keyboard: [[{ text: L.play(new URL(playUrl).hostname.replace(/^www\./, "")), url: playUrl }]] };
   } else body.link_preview_options = { is_disabled: true };
   const res = await fetch(`${api}/bot${token}/sendMessage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   if (!res.ok) {
@@ -173,8 +174,9 @@ async function main() {
 
   const lang = env.ANNOUNCE_LANG === "en" ? "en" : "fr";
   const text = buildMessage(await collect(lottery, draw), { lang, tz: env.ANNOUNCE_TZ || "Europe/Paris" });
-  const repo = env.GITHUB_REPOSITORY ? env.GITHUB_REPOSITORY.split("/") : null;
-  const playUrl = env.PLAY_URL || (repo ? `https://${repo[0].toLowerCase()}.github.io/${repo[1]}/play/` : "");
+  // The button points to the lottery's own site, unless another address is configured
+  // (PLAY_URL=none removes the button).
+  const playUrl = env.PLAY_URL === "none" ? "" : (env.PLAY_URL || OFFICIAL_SITE).trim();
   if (env.DRY_RUN === "1") return console.log(text.replace(/<\/?b>/g, ""));
   if (!env.ANNOUNCE_BOT_TOKEN || !env.ANNOUNCE_CHAT) return console.log("Not configured: add the ANNOUNCE_BOT_TOKEN and ANNOUNCE_CHAT secrets (README, Results bot).");
   await send({ token: env.ANNOUNCE_BOT_TOKEN.trim(), chat: chatId(env.ANNOUNCE_CHAT), text, playUrl, lang, api: env.TELEGRAM_API });

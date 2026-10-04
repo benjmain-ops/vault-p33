@@ -847,7 +847,7 @@ test("results bot: the latest draw is published once to the Telegram chat, with 
   assert.equal(seen[0].url, "/bot123:abc/sendMessage");
   assert.equal(seen[0].body.chat_id, "@results");
   assert.equal(seen[0].body.parse_mode, "HTML");
-  assert.deepEqual(seen[0].body.reply_markup, { inline_keyboard: [[{ text: "Jouer sur Sixte", url: "https://example.org/play/" }]] });
+  assert.deepEqual(seen[0].body.reply_markup, { inline_keyboard: [[{ text: "Jouer sur example.org", url: "https://example.org/play/" }]] });
   await assert.rejects(send({ token: "bad", chat: "@results", text: fr, api }), /Telegram refused the message \(403, Forbidden: bot is not a member/);
   server.close();
 });
