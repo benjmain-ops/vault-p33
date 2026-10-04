@@ -12,6 +12,7 @@ const lib = require("../keeper/lib");
 
 const WEB = path.join(__dirname, "..", "docs");
 const SHOTS = process.env.SHOTS_DIR;
+const VIDEO = process.env.VIDEO_DIR; // records the phone-sized run, with pauses that make it watchable
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/svg+xml", ".woff2": "font/woff2" };
 
 (async () => {
@@ -92,8 +93,9 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
     await page.addInitScript(INIT, user.address.toLowerCase());
     return page;
   };
-  const page = await open({ viewport: { width: 390, height: 844 }, locale: "fr-FR", deviceScaleFactor: 2 });
-  const shot = async (p, name, full = true) => SHOTS && p.screenshot({ path: path.join(SHOTS, name + ".png"), fullPage: full });
+  const page = await open({ viewport: { width: 390, height: 844 }, locale: "fr-FR", deviceScaleFactor: 2, ...(VIDEO ? { recordVideo: { dir: VIDEO, size: { width: 390, height: 844 } } } : {}) });
+  const pause = (ms) => (VIDEO ? page.waitForTimeout(ms) : null);
+  const shot = async (p, name, full = true) => SHOTS && !VIDEO && p.screenshot({ path: path.join(SHOTS, name + ".png"), fullPage: full });
   const text = (id) => page.textContent("#" + id);
   const toastIs = (t) => page.waitForFunction((x) => document.getElementById("toast").textContent.includes(x), t, { timeout: 60000 });
   const step = (m) => console.log("✔ " + m);
@@ -105,6 +107,9 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   assert.match(await text("headline"), /^Tirage du (matin|soir) dans \d+ h \d\d min \d\d s$/);
   assert.match(await text("leadSub"), /Tirage n° 2\. 1 ticket joué, 0,14 WAVAX en jeu/);
   await page.waitForFunction(() => document.getElementById("facts").textContent.includes("12,5"));
+  await page.waitForSelector("#lastBalls .ball");
+  assert.equal(await text("lastBalls"), "94718152316+13", "the last draw, as balls under the headline");
+  await pause(2200);
   assert.match(await text("facts"), /En jeu pour l'instant0,1456 WAVAX.*Tickets joués1.*Prix du ticket0,1821 WAVAX.*Réserve du jackpot12,5 WAVAX/);
   const rows = await page.$$eval("#ranks tr", (trs) => trs.map((tr) => [...tr.children].map((td) => td.textContent)));
   assert.equal(rows.length, 12);
@@ -117,12 +122,13 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   step("sans wallet : tirage, cagnotte, rangs et résultats visibles");
 
   // 2. marking a line: 6 numbers and 2 extras, no more
-  for (const n of [3, 9, 14, 17, 21, 24]) await page.click(`#mainGrid .box:nth-child(${n})`);
+  for (const n of [3, 9, 14, 17, 21, 24]) { await page.click(`#mainGrid .box:nth-child(${n})`); await pause(260); }
   assert.equal(await text("mainCount"), "6 sur 6");
   assert.equal(await page.isDisabled("#mainGrid .box:nth-child(1)"), true, "a 7th number cannot be marked");
   await page.click("#mainGrid .box:nth-child(24)"); // unmark, then mark another
   await page.click("#mainGrid .box:nth-child(1)");
-  for (const n of [2, 5]) await page.click(`#compGrid .box:nth-child(${n})`);
+  for (const n of [2, 5]) { await page.click(`#compGrid .box:nth-child(${n})`); await pause(260); }
+  await pause(900);
   assert.equal(await text("stubLines"), "1 grille complète");
   assert.equal(await text("stubTotal"), "0,1821 WAVAX");
   assert.equal(await text("buyBtn"), "Connecter un wallet");
@@ -136,6 +142,9 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   assert.match(await text("stubNote"), /Il te manque 0,1821 WAVAX : ils seront convertis depuis tes AVAX/);
   await page.click("#buyBtn");
   await toastIs("1 ticket acheté");
+  await pause(2500);
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+  await pause(900);
   let mine = await lottery.getOwnerTickets(user.address);
   assert.equal(mine.length, 1);
   const t1 = await lottery.getTicket(mine[0]);
@@ -149,8 +158,10 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   // 4. five quick-pick lines in one transaction
   await page.click("#flash5Btn");
   assert.equal(await text("stubLines"), "5 grilles complètes");
+  await pause(1800);
   await page.click("#buyBtn");
   await toastIs("5 tickets achetés");
+  await pause(2500);
   mine = await lottery.getOwnerTickets(user.address);
   assert.equal(mine.length, 6);
   await page.waitForFunction(() => document.querySelectorAll("#mine .ticket").length === 6);
@@ -176,6 +187,9 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   await page.goto(url);
   await connect();
   await page.waitForSelector("#claimBtn", { timeout: 60000 });
+  await pause(600);
+  if (VIDEO) await page.evaluate(() => document.getElementById("claimBtn").scrollIntoView({ behavior: "smooth", block: "center" }));
+  await pause(2500);
   assert.match(await text("mine"), new RegExp(`${myWins.length} ticket${myWins.length > 1 ? "s" : ""} gagnant`));
   assert.match(await text("mine"), /gagné, rang 1 : 3 WAVAX/);
   assert.ok((await page.$$("#mine .chip.hit")).length >= 8, "matched numbers are highlighted");
@@ -185,6 +199,11 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   await page.waitForSelector("#cashBtn", { timeout: 60000 });
   await page.click("#cashBtn");
   await toastIs("WAVAX encaissés");
+  await pause(2200);
+  await page.click("#tabResults");
+  assert.ok(await page.$("#results .balls.roll"), "the latest draw rolls in when the results open");
+  await pause(2500);
+  await page.click("#tabMine");
   assert.equal(await wavax.balanceOf(user.address), (gross * 97n) / 100n, "97% after the lottery's fee");
   await page.waitForFunction(() => !document.getElementById("cashBtn") && !document.getElementById("claimBtn"));
   assert.match(await text("mine"), /gagné, rang 1 : 3 WAVAX, réclamé/);
@@ -215,7 +234,9 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   step("sans wallet : renvoi vers Trust Wallet");
 
   assert.deepEqual(errors, []);
+  const video = VIDEO ? await page.video().path() : null;
   await browser.close();
+  if (video) console.log("video: " + video);
   server.close();
   console.log("Page de jeu : parcours complet OK");
   process.exit(0);
