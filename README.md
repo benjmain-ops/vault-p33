@@ -146,7 +146,8 @@ The bot can also run anywhere Node.js runs: `cp .env.example .env`, fill it in, 
 ## Results bot
 
 After each draw, a scheduled workflow publishes the result to a Telegram chat: numbers drawn,
-tickets played, prize pool, winners by rank, and the next draw, with a button to the lottery's
+tickets played, winners by rank, and what the next draw can pay (its pool plus the rollovers),
+as a short animation with a button to the lottery's
 own site. It only reads the chain.
 
 1. Create a bot for this with **@BotFather** (`/newbot`). Do not reuse a bot whose token is used
@@ -158,8 +159,9 @@ own site. It only reads the chain.
 
 Optional: `ANNOUNCE_LANG` (`fr` by default, or `en`), `ANNOUNCE_TZ` (time zone of the dates,
 `Europe/Paris` by default), `PLAY_URL` (address behind the "play" button; by default the lottery's
-own site, `none` to remove the button), `ANNOUNCE_CARD` (`off` to post text only, without the
-picture of the result that the workflow draws with the runner's Chrome).
+own site, `none` to remove the button), `ANNOUNCE_CARD` (`still` to post a still picture instead
+of the short animation that the workflow draws with the runner's Chrome and ffmpeg, `off` to post
+text only).
 
 Telegram requires Mini Apps that use crypto-assets to be built on TON only. This bot is not a
 Mini App, it only posts messages; whether a link to an Avalanche page is welcome in your channel

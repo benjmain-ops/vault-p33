@@ -38,6 +38,11 @@ jobs:
       - name: Install dependencies
         run: npm ci --prefix keeper --ignore-scripts --no-audit --no-fund
 
+      # The result is posted as a short film: Chrome draws the frames, ffmpeg assembles them.
+      # Without ffmpeg the bot posts the still picture instead.
+      - name: Film tools
+        run: command -v ffmpeg >/dev/null || sudo apt-get install -y -qq ffmpeg >/dev/null 2>&1 || true
+
       - name: Latest draw
         id: draw
         env:

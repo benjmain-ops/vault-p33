@@ -11,7 +11,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { execFileSync } = require("child_process");
+const { execFileSync, spawn } = require("child_process");
 const { ethers } = require("ethers");
 const lib = require("./lib");
 
@@ -36,11 +36,11 @@ const TEXT = {
     winners: "Gagnants : ", sep: " ; ",
     rank: (r, n, pool) => `${n} ticket${n > 1 ? "s" : ""} au rang ${r}${pool ? ` (${pool} WAVAX à partager)` : ""}`,
     none: "Aucun ticket gagnant : les lots sont reportés sur les prochains tirages.",
-    next: (when, pool, price) => `Prochain tirage ${when} : ${pool} WAVAX déjà en jeu, ticket à ${price} WAVAX.`,
+    next: (when, pool, price) => `Prochain tirage ${when} : ${pool} WAVAX à gagner, ticket à ${price} WAVAX.`,
     notOpen: "Le prochain tirage n'est pas encore ouvert.",
     play: (site) => `Jouer sur ${site}`,
-    cardTitle: "Loterie AVAX", cardDraw: (n) => `Tirage n° ${n}`, cardSold: "tickets joués", cardPool: "WAVAX en jeu", cardWinners: "tickets gagnants",
-    cardNext: (when) => `Prochain tirage ${when}`, cardJackpot: "WAVAX à gagner, reports compris",
+    cardTitle: "Loterie AVAX de BCM DAO", cardDraw: (n) => `Tirage n° ${n}`, cardSold: "tickets joués", cardPool: "WAVAX en jeu", cardWinners: "tickets gagnants",
+    cardNext: (when) => `Prochain tirage ${when}`, cardJackpot: "à gagner, reports compris",
     at: "à",
   },
   en: {
@@ -51,11 +51,11 @@ const TEXT = {
     winners: "Winners: ", sep: "; ",
     rank: (r, n, pool) => `${n} ticket${n === 1 ? "" : "s"} at rank ${r}${pool ? ` (${pool} WAVAX to share)` : ""}`,
     none: "No winning ticket: the prizes roll over to the next draws.",
-    next: (when, pool, price) => `Next draw ${when}: ${pool} WAVAX in play already, ticket at ${price} WAVAX.`,
+    next: (when, pool, price) => `Next draw ${when}: ${pool} WAVAX to win, ticket at ${price} WAVAX.`,
     notOpen: "The next draw is not open yet.",
     play: (site) => `Play on ${site}`,
-    cardTitle: "AVAX lottery", cardDraw: (n) => `Draw no. ${n}`, cardSold: "tickets played", cardPool: "WAVAX in play", cardWinners: "winning tickets",
-    cardNext: (when) => `Next draw ${when}`, cardJackpot: "WAVAX to win, rollovers included",
+    cardTitle: "BCM DAO's AVAX lottery", cardDraw: (n) => `Draw no. ${n}`, cardSold: "tickets played", cardPool: "WAVAX in play", cardWinners: "winning tickets",
+    cardNext: (when) => `Next draw ${when}`, cardJackpot: "to win, rollovers included",
     at: "at",
   },
 };
@@ -106,21 +106,23 @@ async function collect(lottery, draw) {
 }
 
 /** The message, in Telegram's HTML. */
-function buildMessage({ draw, sold, byRank, next, price }, { lang = "fr", tz = "Europe/Paris", short = false } = {}) {
+function buildMessage({ draw, sold, byRank, next, price, reserve = 0n }, { lang = "fr", tz = "Europe/Paris", short = false } = {}) {
   const L = TEXT[lang] || TEXT.fr;
   const winnersLine = () => {
     if (!byRank.size) return L.none;
     const parts = [...byRank.keys()].sort((a, b) => a - b).map((r) => L.rank(r, byRank.get(r), draw.finalized && draw.rankPools[r - 1] > 0n ? fmt(draw.rankPools[r - 1], 3, L.locale) : ""));
     return L.winners + parts.join(L.sep) + ".";
   };
-  // Under the picture, only what the picture does not say: who won what.
-  if (short) return esc(winnersLine());
   const when = (ts) => {
     const d = new Date(Number(ts) * 1000);
     const day = d.toLocaleDateString(L.locale, { weekday: "short", day: "numeric", month: "short", timeZone: tz });
     const hour = d.toLocaleTimeString(L.locale, { hour: "2-digit", minute: "2-digit", timeZone: tz });
     return `${day} ${L.at} ${hour}`;
   };
+  // the next draw pays its own pool plus what earlier draws left unwon
+  const nextLine = next ? L.next(when(next.scheduledTime), fmt(next.prizePool + reserve, 2, L.locale), fmt(price, 4, L.locale)) : L.notOpen;
+  // Under the picture, what the picture does not spell out: who won what, and the next draw.
+  if (short) return esc(winnersLine()) + "\n\n" + esc(nextLine);
   const lines = [
     `<b>${esc(L.title(draw.id))}</b>`,
     esc(when(draw.scheduledTime)),
@@ -137,9 +139,12 @@ function buildMessage({ draw, sold, byRank, next, price }, { lang = "fr", tz = "
     });
     lines.push(esc(L.winners + parts.join(L.sep) + "."));
   } else lines.push(esc(L.none));
-  lines.push("", esc(next ? L.next(when(next.scheduledTime), fmt(next.prizePool, 2, L.locale), fmt(price, 4, L.locale)) : L.notOpen));
+  lines.push("", esc(nextLine));
   return lines.join("\n");
 }
+
+// the animated card: the jackpot counts up between these two instants, the film lasts FILM_MS and then holds
+const COUNT_FROM = 3700, COUNT_TO = 5000, FILM_MS = 6300, HOLD_S = 3.5, FPS = 20;
 
 /** The result as a picture: an HTML card, 1200 x 675, rendered by a headless Chrome. */
 function cardHtml({ draw, sold, byRank, next, reserve = 0n }, { lang = "fr", tz = "Europe/Paris", font = "" } = {}) {
@@ -149,9 +154,9 @@ function cardHtml({ draw, sold, byRank, next, reserve = 0n }, { lang = "fr", tz 
     return `${d.toLocaleDateString(L.locale, { weekday: "short", day: "numeric", month: "short", timeZone: tz })} ${L.at} ${d.toLocaleTimeString(L.locale, { hour: "2-digit", minute: "2-digit", timeZone: tz })}`;
   };
   const winners = [...byRank.values()].reduce((a, n) => a + n, 0);
-  const balls = Array.from(draw.winningMain, Number).map((n) => `<span class="ball">${n}</span>`).join("") +
-    `<span class="plus">+</span>` + Array.from(draw.winningComp, Number).map((n) => `<span class="ball extra">${n}</span>`).join("");
-  const stat = (value, label) => `<div class="stat"><b>${esc(value)}</b><span>${esc(label)}</span></div>`;
+  const balls = Array.from(draw.winningMain, Number).map((n, i) => `<span class="ball" style="--i:${i}">${n}</span>`).join("") +
+    `<span class="plus">+</span>` + Array.from(draw.winningComp, Number).map((n, i) => `<span class="ball extra" style="--i:${7.6 + i}">${n}</span>`).join("");
+  const stat = (value, label, i) => `<div class="stat" style="--i:${i}"><b>${esc(value)}</b><span>${esc(label)}</span></div>`;
   const jackpot = (next ? next.prizePool : 0n) + reserve;
   return `<!doctype html><html><head><meta charset="utf-8"><style>
   ${font ? `@font-face { font-family: "Archivo"; src: url("${font}") format("woff2"); font-weight: 100 900; font-stretch: 62% 125%; }` : ""}
@@ -175,31 +180,131 @@ function cardHtml({ draw, sold, byRank, next, reserve = 0n }, { lang = "fr", tz 
   .stat b { display: block; font-size: 54px; font-weight: 800; font-stretch: 66%; line-height: 1.05; }
   .stat span { font-size: 24px; color: #AAB1BD; }
   .next { text-align: right; }
-  .next span { display: block; font-size: 24px; color: #AAB1BD; }
-  .next b { display: block; font-size: 76px; font-weight: 800; font-stretch: 66%; line-height: 1.05; color: #F2C230; }
+  .next > span { display: block; font-size: 24px; color: #AAB1BD; }
+  .next b { display: block; font-size: 84px; font-weight: 800; font-stretch: 66%; line-height: 1.05; white-space: nowrap; font-variant-numeric: tabular-nums;
+    color: transparent; -webkit-background-clip: text; background-clip: text; background-size: 300% 100%; background-position: 100% 0;
+    background-image: linear-gradient(100deg, #C9971A 0%, #F2C230 38%, #FFF6C9 50%, #F2C230 62%, #C9971A 100%); filter: drop-shadow(0 0 18px rgba(242, 194, 48, 0.35)); }
+  .next b i { font-style: normal; font-size: 0.6em; letter-spacing: 0.04em; margin-left: 14px; }
+  /* Animated version only (class set by the renderer). Without it the card is its own last frame. */
+  .anim .head { animation: rise 0.5s both; }
+  .anim .ball { animation: drop 0.6s calc(0.45s + var(--i) * 0.27s) both cubic-bezier(0.2, 1.5, 0.4, 1); }
+  .anim .plus { animation: rise 0.3s 2.4s both; }
+  .anim .stat { animation: rise 0.45s calc(3.3s + var(--i) * 0.12s) both; }
+  .anim .next { animation: rise 0.5s ${COUNT_FROM - 200}ms both; }
+  .anim .next b { animation: shine 1.6s ${COUNT_TO - 300}ms both ease-in-out; }
+  @keyframes rise { from { opacity: 0; transform: translateY(18px); } }
+  @keyframes drop { from { opacity: 0; transform: translateY(-150px) scale(0.5); } 60% { opacity: 1; } }
+  @keyframes shine { from { background-position: 100% 0; } to { background-position: 0 0; } }
 </style></head><body>
   <div class="head"><div><small>${esc(L.cardTitle)}</small><h1>${esc(L.cardDraw(draw.id))}</h1></div><div class="date">${esc(when(draw.scheduledTime))}</div></div>
   <div class="balls">${balls}</div>
   <div class="foot">
-    <div class="stats">${stat(sold, L.cardSold)}${stat(fmt(draw.prizePool, 2, L.locale), L.cardPool)}${stat(winners, L.cardWinners)}</div>
-    ${next ? `<div class="next"><span>${esc(L.cardNext(when(next.scheduledTime)))}</span><b>${esc(fmt(jackpot, 2, L.locale))}</b><span>${esc(L.cardJackpot)}</span></div>` : ""}
+    <div class="stats">${stat(sold, L.cardSold, 0)}${stat(fmt(draw.prizePool, 2, L.locale), L.cardPool, 1)}${stat(winners, L.cardWinners, 2)}</div>
+    ${next ? `<div class="next"><span>${esc(L.cardNext(when(next.scheduledTime)))}</span><b><span id="amount">${esc(fmt(jackpot, 2, L.locale))}</span><i>AVAX</i></b><span>${esc(L.cardJackpot)}</span></div>` : ""}
   </div>
+<script>
+  // The animated version is drawn frame by frame: seek(ms) puts every animation at that instant.
+  const amount = document.getElementById("amount"), last = amount ? amount.textContent : "";
+  const target = ${Number(ethers.formatEther(jackpot))}, from = ${COUNT_FROM}, to = ${COUNT_TO};
+  function seek(ms) {
+    for (const a of document.getAnimations()) { a.pause(); a.currentTime = ms; }
+    if (!amount) return;
+    const k = Math.min(1, Math.max(0, (ms - from) / (to - from))), eased = 1 - Math.pow(1 - k, 3);
+    amount.textContent = k >= 1 ? last : (target * eased).toLocaleString("${L.locale}", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+</script>
 </body></html>`;
 }
 
-/** Renders the card to a PNG with whatever Chrome is installed. Returns the file's path, or null. */
-function renderCard(data, opts = {}) {
-  const candidates = [process.env.CHROME, "google-chrome", "google-chrome-stable", "chromium", "chromium-browser"].filter(Boolean);
+const CHROMES = () => [process.env.CHROME, "google-chrome", "google-chrome-stable", "chromium", "chromium-browser"].filter(Boolean);
+const CHROME_FLAGS = ["--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=1", "--window-size=1200,675"];
+
+/** Plays the card in a headless Chrome and saves one PNG per frame (DevTools protocol). Returns the frames' paths. */
+async function captureFrames(bin, html, dir) {
+  const WebSocket = require("ws"); // comes with ethers
+  const profile = path.join(dir, "profile-film");
+  const chrome = spawn(bin, [...CHROME_FLAGS, "--remote-debugging-port=0", "--user-data-dir=" + profile, "file://" + html], { stdio: "ignore" });
+  let ws;
+  try {
+    const failed = new Promise((_, no) => chrome.once("error", no));
+    failed.catch(() => {});
+    // Chrome writes the port it chose in its profile
+    const portFile = path.join(profile, "DevToolsActivePort");
+    let port = 0;
+    for (let i = 0; i < 150 && !port; i++) {
+      await Promise.race([new Promise((r) => setTimeout(r, 100)), failed]);
+      try { port = Number(fs.readFileSync(portFile, "utf8").split("\n")[0]); } catch {}
+    }
+    if (!port) throw new Error("no DevTools port");
+    let page;
+    for (let i = 0; i < 50 && !page; i++) {
+      page = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((t) => t.type === "page" && t.url.startsWith("file:"));
+      if (!page) await new Promise((r) => setTimeout(r, 100));
+    }
+    if (!page) throw new Error("no page");
+    ws = new WebSocket(page.webSocketDebuggerUrl, { perMessageDeflate: false });
+    await new Promise((ok, no) => { ws.once("open", ok); ws.once("error", no); });
+    const waiting = new Map();
+    let seq = 0;
+    ws.on("message", (m) => { const d = JSON.parse(m); const w = waiting.get(d.id); if (w) { waiting.delete(d.id); d.error ? w.no(new Error(d.error.message)) : w.ok(d.result); } });
+    const call = (method, params = {}) => new Promise((ok, no) => {
+      const id = ++seq;
+      waiting.set(id, { ok, no });
+      ws.send(JSON.stringify({ id, method, params }));
+      setTimeout(() => waiting.delete(id) && no(new Error(method + " timed out")), 20000);
+    });
+    const run = async (expression) => {
+      const r = await call("Runtime.evaluate", { expression, awaitPromise: true });
+      if (r.exceptionDetails) throw new Error("page script failed");
+    };
+    await call("Emulation.setDeviceMetricsOverride", { width: 1200, height: 675, deviceScaleFactor: 1, mobile: false });
+    await run(`document.fonts.ready.then(() => { document.documentElement.classList.add("anim"); })`);
+    const frames = [];
+    const count = Math.round((FILM_MS / 1000) * FPS);
+    for (let i = 0; i <= count; i++) {
+      await run(`seek(${Math.round((i * 1000) / FPS)}); new Promise((r) => requestAnimationFrame(() => r()))`);
+      const shot = await call("Page.captureScreenshot", { format: "png" });
+      const file = path.join(dir, `f${String(i).padStart(3, "0")}.png`);
+      fs.writeFileSync(file, Buffer.from(shot.data, "base64"));
+      frames.push(file);
+    }
+    return frames;
+  } finally {
+    try { if (ws) ws.terminate(); } catch {}
+    chrome.kill("SIGKILL");
+  }
+}
+
+/**
+ * Draws the card with whatever Chrome is installed. Returns { png, mp4 }: the still picture, and
+ * the short film when it could be made (it needs ffmpeg too), or null when nothing could be drawn.
+ */
+async function renderCard(data, opts = {}) {
   let font = "";
   try { font = "data:font/woff2;base64," + fs.readFileSync(path.join(__dirname, "..", "docs", "play", "fonts", "archivo.woff2")).toString("base64"); } catch {}
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "card-"));
-  const html = path.join(dir, "card.html"), png = path.join(dir, "card.png");
+  const html = path.join(dir, "card.html"), png = path.join(dir, "card.png"), mp4 = path.join(dir, "card.mp4");
   fs.writeFileSync(html, cardHtml(data, { ...opts, font }));
-  for (const bin of candidates) {
+  if (opts.film !== false) {
+    for (const bin of CHROMES()) {
+      try {
+        const frames = await captureFrames(bin, html, dir);
+        fs.copyFileSync(frames[frames.length - 1], png);
+        try {
+          // H.264 without sound: Telegram plays it in a loop, like a GIF. The last frame is held.
+          execFileSync(process.env.FFMPEG || "ffmpeg", ["-y", "-loglevel", "error", "-framerate", String(FPS), "-i", path.join(dir, "f%03d.png"),
+            "-vf", `tpad=stop_mode=clone:stop_duration=${HOLD_S},scale=1280:720:flags=lanczos,format=yuv420p`,
+            "-c:v", "libx264", "-preset", "slow", "-crf", "21", "-movflags", "+faststart", "-an", mp4], { stdio: "ignore", timeout: 120000 });
+          if (fs.statSync(mp4).size > 5000) return { png, mp4 };
+        } catch {}
+        return { png, mp4: null };
+      } catch {}
+    }
+  }
+  for (const bin of CHROMES()) {
     try {
-      execFileSync(bin, ["--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=1", "--window-size=1200,675",
-        "--virtual-time-budget=4000", "--user-data-dir=" + path.join(dir, "profile"), "--screenshot=" + png, "file://" + html], { stdio: "ignore", timeout: 60000 });
-      if (fs.existsSync(png) && fs.statSync(png).size > 5000) return png;
+      execFileSync(bin, [...CHROME_FLAGS, "--virtual-time-budget=4000", "--user-data-dir=" + path.join(dir, "profile"), "--screenshot=" + png, "file://" + html], { stdio: "ignore", timeout: 60000 });
+      if (fs.existsSync(png) && fs.statSync(png).size > 5000) return { png, mp4: null };
     } catch {}
   }
   return null;
@@ -219,17 +324,20 @@ function chatId(value) {
   throw new Error("ANNOUNCE_CHAT is not a channel name: expected @name, a t.me/name link or a numeric id");
 }
 
-async function send({ token, chat, text, playUrl, photo = null, lang = "fr", api = "https://api.telegram.org" }) {
+async function send({ token, chat, text, playUrl, photo = null, film = null, lang = "fr", api = "https://api.telegram.org" }) {
   const L = TEXT[lang] || TEXT.fr;
   const markup = playUrl ? { inline_keyboard: [[{ text: L.play(new URL(playUrl).hostname.replace(/^www\./, "")), url: playUrl }]] } : null;
   let res;
-  if (photo) {
-    // the picture carries the result; the text goes with it as its caption
+  if (photo || film) {
+    // the picture (or its short film) carries the result; the text goes with it as its caption
     const form = new FormData();
     form.append("chat_id", chat); form.append("caption", text); form.append("parse_mode", "HTML");
     if (markup) form.append("reply_markup", JSON.stringify(markup));
-    form.append("photo", new Blob([fs.readFileSync(photo)], { type: "image/png" }), "tirage.png");
-    res = await fetch(`${api}/bot${token}/sendPhoto`, { method: "POST", body: form });
+    if (film) {
+      form.append("width", "1280"); form.append("height", "720");
+      form.append("animation", new Blob([fs.readFileSync(film)], { type: "video/mp4" }), "tirage.mp4");
+    } else form.append("photo", new Blob([fs.readFileSync(photo)], { type: "image/png" }), "tirage.png");
+    res = await fetch(`${api}/bot${token}/${film ? "sendAnimation" : "sendPhoto"}`, { method: "POST", body: form });
   } else {
     const body = { chat_id: chat, text, parse_mode: "HTML", link_preview_options: { is_disabled: true } };
     if (markup) body.reply_markup = markup;
@@ -269,16 +377,18 @@ async function main() {
   const lang = env.ANNOUNCE_LANG === "en" ? "en" : "fr";
   const tz = env.ANNOUNCE_TZ || "Europe/Paris";
   const data = await collect(lottery, draw);
-  // a picture of the result, unless switched off or no browser is there to draw it (then: text only)
-  const photo = env.ANNOUNCE_CARD === "off" ? null : renderCard(data, { lang, tz });
-  const text = buildMessage(data, { lang, tz, short: !!photo });
-  if (env.CARD_FILE && photo) fs.copyFileSync(photo, env.CARD_FILE);
+  // The result as a short film, or as a still picture (ANNOUNCE_CARD=still, or no ffmpeg), unless
+  // switched off or no browser is there to draw it (then: text only).
+  const card = env.ANNOUNCE_CARD === "off" ? null : await renderCard(data, { lang, tz, film: env.ANNOUNCE_CARD !== "still" });
+  const photo = card && card.png, film = card && card.mp4;
+  const text = buildMessage(data, { lang, tz, short: !!card });
+  if (env.CARD_FILE && card) fs.copyFileSync(film || photo, env.CARD_FILE);
   // The button points to the lottery's own site, unless another address is configured
   // (PLAY_URL=none removes the button).
   const playUrl = env.PLAY_URL === "none" ? "" : (env.PLAY_URL || OFFICIAL_SITE).trim();
   if (env.DRY_RUN === "1") return console.log(text.replace(/<\/?b>/g, ""));
   if (!env.ANNOUNCE_BOT_TOKEN || !env.ANNOUNCE_CHAT) return console.log("Not configured: add the ANNOUNCE_BOT_TOKEN and ANNOUNCE_CHAT secrets (README, Results bot).");
-  await send({ token: env.ANNOUNCE_BOT_TOKEN.trim(), chat: chatId(env.ANNOUNCE_CHAT), text, playUrl, photo, lang, api: env.TELEGRAM_API });
+  await send({ token: env.ANNOUNCE_BOT_TOKEN.trim(), chat: chatId(env.ANNOUNCE_CHAT), text, playUrl, photo, film, lang, api: env.TELEGRAM_API });
   if (env.PUBLISHED_FILE) fs.writeFileSync(env.PUBLISHED_FILE, draw.id.toString() + "\n"); // lets the workflow remember this draw
   console.log("published");
 }
