@@ -88,6 +88,14 @@
     <div class="actions" id="walletList"></div>
   </section>
 
+  <!-- Essai à blanc -->
+  <section class="card" id="dryCard" hidden>
+    <h2>Tester sans rien déployer</h2>
+    <p>Simulation complète sur l'état réel d'Avalanche : factory, vault, dépôt, vente du rendement sur le vrai pool, achat de tickets sur la vraie loterie, retrait. Rien n'est signé ni envoyé, aucun gas.</p>
+    <div class="actions"><button id="dryBtn">Lancer la simulation</button></div>
+    <div id="dryOut"></div>
+  </section>
+
   <!-- 1 bis. Première installation -->
   <section class="card" id="setupCard" hidden>
     <h2>Première installation</h2>
@@ -184,13 +192,14 @@
   <footer>
     <p>Jeu d'argent : en moyenne, le rendement joué est perdu. Ton principal reste exposé au cours du p33. Contrats non audités, à utiliser avec des montants que tu peux te permettre de perdre.</p>
     <p class="mono" id="factoryInfo"></p>
-    <p class="mono">Version 3</p>
+    <p class="mono">Version 4</p>
   </footer>
 </main>
 
 <script src="config.js"></script>
 <script src="ethers.umd.min.js"></script>
 <script src="factory.js"></script>
+<script src="dryrun.js"></script>
 <script src="vaultlib.js"></script>
 <script>
 (() => {
@@ -446,6 +455,7 @@
   }
   async function showSetup() {
     $("setupCard").hidden = false;
+    $("dryCard").hidden = false;
     const A = CFG.addresses, hint = $("iPoolHint");
     $("iPool").value = A.pool || "";
     try {
@@ -516,6 +526,7 @@
       $("cMaxPrice").value = E.formatEther(price * 2n);
       $("cPriceHint").textContent = "Prix actuel : " + fmt(price) + " WAVAX. Le plafond protège ton budget si le prix du ticket était modifié de façon anormale.";
       $("createCard").hidden = false;
+      $("dryCard").hidden = false;
       $("dash").hidden = true;
       return;
     }
@@ -523,6 +534,7 @@
     $("vAddr").textContent = addr;
     $("vLink").href = CFG.explorer + "/address/" + addr;
     $("createCard").hidden = true;
+    $("dryCard").hidden = true;
     $("dash").hidden = false;
     await refresh(true);
   }
@@ -567,6 +579,89 @@
     }
     $("sReinvest").checked = reinvest;
   }
+
+  // ── essai à blanc ──
+  // Le code de DryRun est injecté à l'adresse du wallet par un « state override » d'eth_call :
+  // tout s'exécute contre l'état réel de la chaîne (vrai p33, vrai pool, vraie loterie) avec le
+  // solde réel du wallet, mais ce n'est qu'un appel en lecture. Rien n'est envoyé.
+  function decodeRevert(data) {
+    if (!data || data === "0x") return "échec sans message";
+    if (data.startsWith("0x08c379a0")) {
+      try {
+        const msg = E.AbiCoder.defaultAbiCoder().decode(["string"], "0x" + data.slice(10))[0];
+        if (/E05|E06|E27|E28/.test(msg)) return "aucun tirage ouvert en ce moment à la loterie (" + msg + ") : réessaie quand un tirage est ouvert";
+        return msg;
+      } catch (_) {}
+    }
+    try { const p = VAULT_IFACE.parseError(data); if (p) return ERRORS_FR[p.name] || p.name; } catch (_) {}
+    return "erreur " + data.slice(0, 74);
+  }
+  $("dryBtn").onclick = async () => {
+    const out = $("dryOut"), btn = $("dryBtn");
+    const line = (label, value, ok) => {
+      const d = document.createElement("div");
+      d.className = "row";
+      const a = document.createElement("span"); a.textContent = label;
+      const b = document.createElement("span"); b.textContent = value;
+      if (ok === false) b.style.color = "var(--bad)";
+      if (ok === true) b.style.color = "var(--good)";
+      d.append(a, b); out.appendChild(d);
+    };
+    btn.disabled = true;
+    out.textContent = "";
+    status("Simulation en cours…");
+    try {
+      const A = CFG.addresses;
+      const poolAddr = ($("iPool").value || "").trim() || A.pool;
+      const token = new E.Contract(A.p33, ERC20_ABI, provider);
+      const bal = await token.balanceOf(account);
+      if (bal === 0n) throw new Error("Ce wallet n'a pas de p33. La simulation utilise ton solde réel (sans le dépenser) : il en faut un peu.");
+      const deposit = (bal * 90n) / 100n, yieldAmt = bal / 100n; // 1 % du solde joue le rôle du rendement
+      const iface = new E.Interface(window.DRYRUN_ARTIFACT.abi);
+      const data = iface.encodeFunctionData("run", [E.getAddress(A.p33), E.getAddress(A.wavax), E.getAddress(A.lottery), E.getAddress(poolAddr), deposit, yieldAmt]);
+      const params = [
+        { from: "0x000000000000000000000000000000000000dEaD", to: account, data, gas: "0x1c9c380" },
+        "latest",
+        { [account]: { code: window.DRYRUN_ARTIFACT.runtime } },
+      ];
+      // RPC public d'abord (il accepte l'injection de code en lecture), wallet en secours.
+      let raw;
+      try {
+        if (!CFG.rpcUrl) throw new Error("pas de RPC public configuré");
+        raw = await new E.JsonRpcProvider(new URL(CFG.rpcUrl, location.href).href, Number(CFG.chainId), { staticNetwork: true }).send("eth_call", params);
+      } catch (first) {
+        console.warn(first);
+        raw = await provider.send("eth_call", params);
+      }
+      const r = iface.decodeFunctionResult("run", raw)[0];
+
+      line("Factory et vault", r.created ? "OK" : "échec", r.created);
+      line("Dépôt de " + fmt(deposit, 2) + " p33", r.deposited ? "OK" : "échec", r.deposited);
+      if (r.swapped) {
+        const price = (r.wavaxOut * 10n ** 18n) / r.p33Sold;
+        line("Vente sur le pool", fmt(r.p33Sold) + " p33 → " + fmt(r.wavaxOut, 6) + " WAVAX", true);
+        line("Cours obtenu", fmt(price, 6) + " WAVAX par p33");
+        const floor = (price * 75n) / 100n;
+        line("Prix plancher conseillé (−25 %)", E.formatEther(floor - (floor % 10n ** 12n)));
+        if (!$("cFloor").value) $("cFloor").value = E.formatEther(floor - (floor % 10n ** 12n));
+      } else if (r.deposited) {
+        line("Vente sur le pool", "échec", false);
+      }
+      if (r.swapped) {
+        line("Achat de tickets", r.bought ? r.tickets + " ticket(s) à " + fmt(r.ticketPrice) + " WAVAX" : "échec", r.bought);
+      }
+      if (r.deposited) line("Retrait total", r.withdrawn ? fmt(r.p33Back, 2) + " p33 récupérés" : "échec", r.withdrawn);
+      if (r.error && r.error !== "0x") line("Cause", decodeRevert(r.error), false);
+      const allOk = r.created && r.deposited && r.swapped && r.bought && r.withdrawn;
+      status(allOk ? "Simulation réussie : toutes les étapes passent sur les vrais contrats. Rien n'a été envoyé." : "Simulation terminée : au moins une étape échoue, voir le détail. Rien n'a été envoyé.", allOk ? "ok" : "err");
+    } catch (e) {
+      console.error(e);
+      const raw = (e && (e.shortMessage || e.message)) || String(e);
+      status("Simulation impossible : " + (raw.length > 240 ? raw.slice(0, 240) + "…" : raw), "err");
+    } finally {
+      btn.disabled = false;
+    }
+  };
 
   // ── actions ──
   $("createBtn").onclick = () => run("Création du vault", async () => {
