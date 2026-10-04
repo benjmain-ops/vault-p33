@@ -52,7 +52,6 @@ async function planHarvest(ctx, vault) {
   const harvestable = await vault.harvestable();
   if (harvestable < cfg.minHarvest) return none;
   if (!inHarvestWindow(now)) return cfg.log(`  harvest: outside the window (TWAP buyback in progress or flip approaching)`), none;
-  if ((await vault.minWavaxPerP33()) === 0n) return cfg.log(`  harvest: floor price not set by the owner`), none;
   let quoted;
   try {
     quoted = await vault.harvest.staticCall(harvestable, 0n);

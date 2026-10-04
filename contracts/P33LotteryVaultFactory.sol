@@ -40,7 +40,7 @@ contract P33LotteryVaultFactory {
         defaultKeeper = defaultKeeper_;
     }
 
-    function createVault(uint256 minWavaxPerP33, uint256 maxTicketPrice, uint256 reinvestCap)
+    function createVault(uint16 maxDeviationBps, uint256 maxTicketPrice, uint256 reinvestCap)
         external
         returns (address vault)
     {
@@ -52,7 +52,7 @@ contract P33LotteryVaultFactory {
                 wavax,
                 lottery,
                 pool,
-                minWavaxPerP33,
+                maxDeviationBps,
                 maxTicketPrice,
                 reinvestCap
             )

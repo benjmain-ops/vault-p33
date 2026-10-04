@@ -2,6 +2,38 @@
   "abi": [
     {
       "inputs": [],
+      "name": "getActiveId",
+      "outputs": [
+        {
+          "internalType": "uint24",
+          "name": "",
+          "type": "uint24"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint24",
+          "name": "id",
+          "type": "uint24"
+        }
+      ],
+      "name": "getPriceFromId",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
       "name": "getTokenX",
       "outputs": [
         {

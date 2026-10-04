@@ -22,7 +22,7 @@ dépensé en tickets de la loterie BCM (`PartnerLotteryCore`, Avalanche C-Chain)
 
 Garde-fous réglés par le propriétaire :
 
-- `minWavaxPerP33` : prix plancher de vente du rendement. À 0, la vente est bloquée.
+- Cours de référence automatique : le vault retient le cours du pool à chaque passage et refuse de vendre plus de `maxDeviationBps` (10 % par défaut) en dessous. Rien à tenir à jour. `minWavaxPerP33` reste disponible comme plancher absolu facultatif (0 = aucun).
 - `maxTicketPrice` : prix maximum d'un ticket. Le prix est modifiable par une clé chaude côté BCM ; ce plafond évite qu'un prix anormal vide le budget.
 - `reinvestCap` : montant maximum de gains rejoué à chaque encaissement (0 = rien n'est rejoué). Un gros gain n'est donc jamais rejoué en entier.
 

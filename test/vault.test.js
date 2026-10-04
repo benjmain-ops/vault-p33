@@ -13,10 +13,12 @@ test("factory: the caller is the owner, the factory has no rights", async () => 
   assert.equal(await s.vault.keeper(), s.keeper.address);
   assert.equal(await s.vault.pool(), s.pool.target);
   assert.equal(await s.factory.vaultCount(), 1n);
-  assert.equal(await s.vault.minWavaxPerP33(), E("0.015"));
+  assert.equal(await s.vault.maxDeviationBps(), 1000n);
+  assert.equal(await s.vault.minWavaxPerP33(), 0n, "no manual floor needed");
+  assert.equal(await s.vault.referencePrice(), E("0.017") - 1n, "reference taken from the pool at creation (1 wei of fixed-point rounding)");
   assert.equal(await s.vault.maxTicketPrice(), E("0.5"));
 
-  await (await s.factory.connect(s.player).createVault(E("0.015"), E("0.5"), E("1"))).wait();
+  await (await s.factory.connect(s.player).createVault(1000, E("0.5"), E("1"))).wait();
   const v2 = (await s.factory.vaultsOf(s.player.address))[0];
   assert.notEqual(v2, s.vault.target);
   assert.equal(await new ethers.Contract(v2, s.vault.interface, s.provider).owner(), s.player.address);
@@ -49,19 +51,47 @@ test("harvest: only the surplus is sold, the principal stays covered", async () 
   assert.ok((await s.p33.convertToAssets(left)) >= E("1000"), "the principal must stay covered");
 });
 
-test("harvest: rejected below the floor price, and when no floor price is set", async () => {
+test("harvest: automatic reference price, no manual floor to maintain", async () => {
   const s = await setup();
+  const k = s.vault.connect(s.keeper);
   await s.depositP33(E("1000"));
   await (await s.p33.setRatio(E("1.02"))).wait();
   const h = await s.vault.harvestable();
+  assert.equal(await s.vault.floorPrice(), E("0.0153") - 1n, "10% below the reference of 0.017");
 
-  await (await s.pool.setRate(E("0.010"))).wait(); // pool manipulated / price collapsed
-  await expectRevert(s.vault.connect(s.keeper).harvest(h, 0), sel("Slippage(uint256,uint256)"));
+  // price pushed 41% down at the moment of the sale (sandwich, or a crash): refused
+  await (await s.pool.setRate(E("0.010"))).wait();
+  await expectRevert(k.harvest(h, 0), sel("Slippage(uint256,uint256)"));
   assert.equal(await s.p33.balanceOf(s.pool.target), 0n, "the p33 did not stay in the pool");
   assert.equal(await s.vault.ticketBudget(), 0n);
 
-  await (await s.vault.setGuards(0, E("0.5"))).wait();
-  await expectRevert(s.vault.connect(s.keeper).harvest(h, 0), sel("FloorNotSet()"));
+  // same pass through cycle(): skipped, and the reference does not move yet (too recent)
+  await (await k.cycle(ethers.MaxUint256, 0, 0, [], [], [], [])).wait();
+  assert.equal(await s.vault.harvestable(), h);
+  assert.equal(await s.vault.referencePrice(), E("0.017") - 1n);
+
+  // an hour later the price is still there: this pass is skipped too, but the reference follows
+  await s.warp(3700n);
+  await (await k.cycle(ethers.MaxUint256, 0, 0, [], [], [], [])).wait();
+  assert.equal(await s.vault.harvestable(), h, "still not sold on this pass");
+  assert.equal(await s.vault.referencePrice(), E("0.010") - 1n, "reference updated to the market");
+
+  // next pass: the market has settled at the new price, the sale goes through without anyone touching a setting
+  await (await k.cycle(ethers.MaxUint256, 0, 0, [], [], [], [])).wait();
+  assert.equal(await s.vault.harvestable(), 0n);
+  assert.equal(await s.vault.ticketBudget(), (h * E("0.010")) / E("1"));
+
+  // a price moving up is never a problem
+  await (await s.p33.setRatio(E("1.04"))).wait();
+  await (await s.pool.setRate(E("0.030"))).wait();
+  await (await k.harvest(await s.vault.harvestable(), 0)).wait();
+
+  // the optional absolute floor still applies on top when the owner sets one
+  await (await s.p33.setRatio(E("1.06"))).wait();
+  await (await s.vault.setGuards(E("0.05"), E("0.5"), 1000)).wait();
+  await expectRevert(k.harvest(await s.vault.harvestable(), 0), sel("Slippage(uint256,uint256)"));
+  await expectRevert(s.vault.setGuards(0, E("0.5"), 0), sel("GuardTooHigh()"));
+  await expectRevert(s.vault.setGuards(0, E("0.5"), 6000), sel("GuardTooHigh()"));
 });
 
 test("purchase: as many tickets as the budget allows, in batches, tickets held in the vault's name", async () => {
@@ -115,7 +145,7 @@ test("permissions: the keeper cannot withdraw anything, a stranger cannot trigge
   await expectRevert(k.withdraw(E("1"), s.keeper.address), unauthorized);
   await expectRevert(k.withdrawAll(s.keeper.address), unauthorized);
   await expectRevert(k.withdrawWavax(1, s.keeper.address), unauthorized);
-  await expectRevert(k.setGuards(1, 1), unauthorized);
+  await expectRevert(k.setGuards(1, 1, 1000), unauthorized);
   await expectRevert(k.setKeeper(s.keeper.address), unauthorized);
   await expectRevert(k.rescue(s.wavax.target, 1, s.keeper.address), unauthorized);
   await expectRevert(x.harvest(1, 0), sel("NotOperator()"));
@@ -323,7 +353,7 @@ test("cycle: a single transaction collects the winnings, sells the yield and buy
   // 2nd cycle: claim + collection + sale + purchase, still a single transaction
   const p = lib.proofsFor(tree, s.vault.target)[0];
   rc = await (await k.cycle(MAX, 0, 50, [p.id], [p.rank], [p.amount], [p.proof])).wait();
-  assert.deepEqual(names(rc), ["PrizesClaimed", "WinningsCollected", "Harvested", "TicketsBought"]);
+  assert.deepEqual(names(rc), ["PrizesClaimed", "WinningsCollected", "ReferenceUpdated", "Harvested", "TicketsBought"]);
   assert.equal(await s.vault.winnings(), E("2.91"), "3 WAVAX minus the 3% fee, set aside");
   assert.ok((await s.lottery.getOwnerTickets(s.vault.target)).length > 4);
   assert.ok((await s.p33.convertToAssets(await s.p33.balanceOf(s.vault.target))) >= E("5000"), "principal intact");
@@ -414,7 +444,7 @@ test("owner safety: ownership cannot be renounced, funds cannot be withdrawn int
   await expectRevert(s.vault.withdraw(E("1"), s.vault.target), sel("InvalidRecipient()"));
   await expectRevert(s.vault.withdrawWavax(0, s.vault.target), sel("InvalidRecipient()"));
   assert.equal(await s.vault.principalAssets(), E("1000"), "principal untouched by the rejected calls");
-  await expectRevert(s.vault.setGuards(ethers.MaxUint256, E("0.5")), sel("GuardTooHigh()"));
+  await expectRevert(s.vault.setGuards(ethers.MaxUint256, E("0.5"), 1000), sel("GuardTooHigh()"));
 
   // withdrawWavax(max) takes the whole balance, whatever the budget is
   await (await s.wavax.mint(s.owner.address, E("2"))).wait();

@@ -34,8 +34,8 @@ async function setup({ reinvest = false } = {}) {
   await (await p33.mint(owner.address, E("10000"))).wait();
   await (await wavax.mint(player.address, E("100"))).wait();
 
-  // floor price 0.015 WAVAX per p33, ticket price capped at 0.5 WAVAX
-  await (await factory.connect(owner).createVault(E("0.015"), E("0.5"), reinvest ? (reinvest === true ? E("100") : reinvest) : 0n)).wait();
+  // sale refused more than 10% below the reference price, ticket price capped at 0.5 WAVAX
+  await (await factory.connect(owner).createVault(1000, E("0.5"), reinvest ? (reinvest === true ? E("100") : reinvest) : 0n)).wait();
   const vaultAddr = (await factory.vaultsOf(owner.address))[0];
   const vault = new ethers.Contract(vaultAddr, art("P33LotteryVault").abi, owner);
 

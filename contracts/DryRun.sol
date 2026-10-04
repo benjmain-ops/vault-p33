@@ -39,8 +39,8 @@ contract DryRun {
     {
         P33LotteryVault v;
         try new P33LotteryVaultFactory(p33, wavax, lottery, pool, address(0)) returns (P33LotteryVaultFactory f) {
-            // floor of 1 wei so the sale is never refused: the point is to observe the real price
-            try f.createVault(1, type(uint256).max, 0) returns (address a) {
+            // same guard as a real vault: a sale more than 10% below the pool's price is refused
+            try f.createVault(1000, type(uint256).max, 0) returns (address a) {
                 v = P33LotteryVault(a);
                 r.created = true;
             } catch (bytes memory e) {

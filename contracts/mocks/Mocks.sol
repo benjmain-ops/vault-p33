@@ -43,21 +43,33 @@ contract MockP33 is ERC20 {
 contract MockDlmmPool {
     address public immutable getTokenX;
     address public immutable getTokenY;
-    uint256 public rate = 0.017e18; // Y received per X sold, 1e18
+    uint256 public rate; // Y received per X sold, 1e18, at the active bin
+    uint24 public getActiveId = 8387459;
+    mapping(uint24 => uint256) internal rateAt;
     uint256 internal reserveX;
     uint256 internal reserveY;
 
     constructor(address x, address y) {
         getTokenX = x;
         getTokenY = y;
+        rate = 0.017e18;
+        rateAt[getActiveId] = rate;
     }
 
     function getBinStep() external pure returns (uint16) {
         return 25;
     }
 
+    /// @dev Moves the market: a new active bin with the given price.
     function setRate(uint256 r) external {
+        getActiveId = r >= rate ? getActiveId + 1 : getActiveId - 1;
         rate = r;
+        rateAt[getActiveId] = r;
+    }
+
+    /// @dev Price of X in Y at a bin, 128.128 fixed point.
+    function getPriceFromId(uint24 id) external view returns (uint256) {
+        return (rateAt[id] << 128) / 1e18;
     }
 
     /// @dev To be called after funding the pool.

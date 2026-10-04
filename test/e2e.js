@@ -126,7 +126,6 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   assert.match(dry, /Achat de tickets2 ticket\(s\) à 0,19 WAVAX/);
   assert.equal(await provider.getBlockNumber(), blockMid, "la simulation n'envoie aucune transaction");
   assert.equal(await p33.balanceOf(user.address), E("2500"), "solde intact");
-  assert.equal(await page.inputValue("#cFloor"), "0.012749", "prix plancher pré-rempli à partir du cours simulé");
   await shot("1c-simulation");
   step("essai à blanc contre la chaîne, sans transaction");
   await page.click("#installBtn");
@@ -142,19 +141,21 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   step("factory déployée depuis la page par un appel classique, sans robot");
 
   // 1. pas encore de vault -> formulaire de création pré-rempli
-  assert.equal(await page.inputValue("#cMaxPrice"), "0.38");
+  assert.equal(await page.inputValue("#cMaxPrice"), "0.95");
+  assert.equal(await page.isVisible("#cFloor"), false, "plus de prix plancher à saisir");
   await shot("2-creation");
   step("formulaire de création");
 
   // 2. création : le vault appartient au wallet connecté
-  await page.fill("#cFloor", "0,015");
   await page.click("#createBtn");
   await page.waitForSelector("#dash:not([hidden])", { timeout: 60000 });
   const vaultAddr = (await factory.vaultsOf(user.address))[0];
   assert.equal(await text("vAddr"), vaultAddr);
   const vault = new ethers.Contract(vaultAddr, art("P33LotteryVault").abi, provider);
   assert.equal(await vault.owner(), user.address);
-  assert.equal(await vault.minWavaxPerP33(), E("0.015"));
+  assert.equal(await vault.maxDeviationBps(), 1000n);
+  assert.equal(await vault.minWavaxPerP33(), 0n);
+  assert.equal(await vault.maxTicketPrice(), E("0.95"));
   step("vault créé au nom de l'utilisateur");
 
   // 3. dépôt (approve + deposit)
@@ -264,7 +265,8 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   assert.equal(await vault.minWavaxPerP33(), E("0.012"));
   await page.check("#sReinvest");
   await statusIs("Réglage des gains : fait.");
-  assert.equal(await vault.reinvestCap(), E("3.8"), "plafond : 10 tickets au prix maximum");
+  assert.equal(await vault.reinvestCap(), E("1.9"), "plafond : 10 tickets au prix actuel");
+  assert.equal(await vault.maxDeviationBps(), 1000n, "écart maximal conservé");
   step("réglages");
 
   // 7. retrait total : le p33 revient au wallet, principal intact malgré la vente du rendement

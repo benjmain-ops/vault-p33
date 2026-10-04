@@ -113,9 +113,7 @@
   <section class="card" id="createCard" hidden>
     <h2>Créer mon vault</h2>
     <p>Un contrat à ton nom est déployé. Tu es le seul à pouvoir y déposer et en retirer ; le robot qui achète les tickets n'a aucun droit de retrait.</p>
-    <label for="cFloor">Prix plancher de vente du rendement (WAVAX par p33)</label>
-    <input id="cFloor" type="text" inputmode="decimal" placeholder="ex. 0.013">
-    <p class="muted">En dessous de ce prix, le vault refuse de vendre. Prends le cours actuel du p33 en AVAX sur Pharaoh et retire 20 à 30 %.</p>
+    <p class="muted">Protection automatique à la vente : le vault retient le cours du pool à chaque passage et refuse de vendre plus de 10 % en dessous. Rien à régler ni à tenir à jour.</p>
     <label for="cMaxPrice">Prix maximum accepté pour un ticket (WAVAX)</label>
     <input id="cMaxPrice" type="text" inputmode="decimal">
     <p class="muted" id="cPriceHint"></p>
@@ -130,6 +128,7 @@
       <div class="big"><span id="vP33">–</span><span class="unit">p33 dans le vault</span></div>
       <div class="row"><span>Principal protégé</span><span><span id="vPrincipal">–</span> xPHAR</span></div>
       <div class="row"><span>Rendement vendable</span><span><span id="vHarvestable">–</span> p33</span></div>
+      <div class="row"><span>Cours de référence</span><span><span id="vRef">–</span> WAVAX par p33</span></div>
       <div class="row"><span>Dans mon wallet</span><span><span id="wP33">–</span> p33</span></div>
       <label for="amtP33">Montant en p33</label>
       <div class="field"><input id="amtP33" type="text" inputmode="decimal" placeholder="0.0"><button id="maxP33" type="button">Max</button></div>
@@ -173,7 +172,9 @@
       <p class="warn muted" id="notOwner" hidden>Ce wallet n'est pas le propriétaire de ce vault : lecture seule.</p>
       <details>
         <summary>Réglages</summary>
-        <label for="sFloor">Prix plancher de vente (WAVAX par p33)</label>
+        <label for="sDev">Écart maximal accepté sous le cours de référence (%)</label>
+        <input id="sDev" type="text" inputmode="decimal">
+        <label for="sFloor">Plancher absolu facultatif (WAVAX par p33, 0 = aucun)</label>
         <input id="sFloor" type="text" inputmode="decimal">
         <label for="sMaxPrice">Prix maximum d'un ticket (WAVAX)</label>
         <input id="sMaxPrice" type="text" inputmode="decimal">
@@ -192,7 +193,7 @@
   <footer>
     <p>Jeu d'argent : en moyenne, le rendement joué est perdu. Ton principal reste exposé au cours du p33. Contrats non audités, à utiliser avec des montants que tu peux te permettre de perdre.</p>
     <p class="mono" id="factoryInfo"></p>
-    <p class="mono">Version 6</p>
+    <p class="mono">Version 7</p>
   </footer>
 </main>
 
@@ -220,7 +221,7 @@
     "function p33() view returns (address)", "function wavax() view returns (address)",
     "function lottery() view returns (address)", "function defaultKeeper() view returns (address)",
     "function vaultsOf(address) view returns (address[])",
-    "function createVault(uint256 minWavaxPerP33, uint256 maxTicketPrice, uint256 reinvestCap) returns (address)",
+    "function createVault(uint16 maxDeviationBps, uint256 maxTicketPrice, uint256 reinvestCap) returns (address)",
     "function pool() view returns (address)", "function isVault(address) view returns (bool)",
     "event VaultCreated(address indexed owner, address vault)",
   ];
@@ -232,7 +233,8 @@
     "function winnings() view returns (uint256)",
     "function deposit(uint256 shares)", "function withdraw(uint256 shares, address to)",
     "function withdrawAll(address to)", "function withdrawWavax(uint256 amount, address to)",
-    "function setKeeper(address)", "function setGuards(uint256, uint256)", "function setReinvestCap(uint256)",
+    "function setKeeper(address)", "function setGuards(uint256, uint256, uint16)",
+    "function maxDeviationBps() view returns (uint16)", "function referencePrice() view returns (uint256)", "function floorPrice() view returns (uint256)", "function setReinvestCap(uint256)",
     "function harvest(uint256 amountIn, uint256 minOut) returns (uint256)",
     "function collectWinnings()",
     "function cycle(uint256 harvestAmount, uint256 minOut, uint256 maxTickets, uint256[] ticketIds, uint8[] ranks, uint256[] amounts, bytes32[][] proofs) returns (uint256, uint256, uint256)",
@@ -259,7 +261,7 @@
     FloorNotSet: "Le prix plancher n'est pas réglé (Réglages).",
     NothingToBuy: "Le budget ne couvre pas un ticket.",
     ExceedsHarvestable: "Montant supérieur au rendement vendable.",
-    Slippage: "Le cours du p33 est sous ton prix plancher : vente annulée.",
+    Slippage: "Le cours du p33 est trop loin sous le cours de référence : vente annulée. Elle repassera au prochain passage si le cours se stabilise.",
     WrongPool: "Ce contrat n'est pas un pool DLMM p33/WAVAX.",
     LotteryUnavailable: "La loterie ne répond pas pour l'instant.",
     GuardTooHigh: "Prix plancher trop élevé.",
@@ -544,8 +546,9 @@
     }
     if (!addr) {
       const price = await lottery.ticketPrice();
-      $("cMaxPrice").value = E.formatEther(price * 2n);
-      $("cPriceHint").textContent = "Prix actuel : " + fmt(price) + " WAVAX. Le plafond protège ton budget si le prix du ticket était modifié de façon anormale.";
+      $("cMaxPrice").value = E.formatEther(price * 5n);
+      snap.price = price;
+      $("cPriceHint").textContent = "Prix actuel : " + fmt(price) + " WAVAX. Ce plafond (5 fois le prix actuel) ne sert qu'à bloquer un prix anormal ; il n'a pas à être tenu à jour.";
       $("createCard").hidden = false;
       $("dryCard").hidden = false;
       $("dash").hidden = true;
@@ -563,17 +566,18 @@
   async function refresh(fillSettings = false) {
     if (!vault) return;
     const v = vault.target;
-    const [owner, keeper, principal, budget, floor, maxPrice, reinvest, harvestable, winnings, inVault, inWallet, price, claimable, tickets, drawId] =
+    const [owner, keeper, principal, budget, floor, maxPrice, reinvest, harvestable, winnings, inVault, inWallet, price, claimable, tickets, drawId, dev, refPrice] =
       await Promise.all([
         vault.owner(), vault.keeper(), vault.principalAssets(), vault.ticketBudget(), vault.minWavaxPerP33(),
         vault.maxTicketPrice(), vault.reinvestCap(), vault.harvestable(), vault.winnings(),
         p33.balanceOf(v), p33.balanceOf(account), lottery.ticketPrice(), lottery.claimable(v),
-        lottery.getOwnerTickets(v), lottery.currentDrawId(),
+        lottery.getOwnerTickets(v), lottery.currentDrawId(), vault.maxDeviationBps(), vault.referencePrice(),
       ]);
     snap = { owner, principal, budget, harvestable, winnings, inVault, inWallet, price, claimable, maxPrice };
     $("vP33").textContent = fmt(inVault);
     $("vPrincipal").textContent = fmt(principal);
     $("vHarvestable").textContent = fmt(harvestable);
+    $("vRef").textContent = fmt(refPrice, 6);
     $("wP33").textContent = fmt(inWallet);
     $("vBudget").textContent = fmt(budget);
     $("vAffordable").textContent = price > 0n ? (budget / price).toString() : "–";
@@ -595,6 +599,7 @@
 
     if (fillSettings) {
       $("sFloor").value = E.formatEther(floor);
+      $("sDev").value = String(Number(dev) / 100);
       $("sMaxPrice").value = E.formatEther(maxPrice);
       $("sKeeper").value = keeper;
     }
@@ -679,9 +684,6 @@
         const price = (r.wavaxOut * 10n ** 18n) / r.p33Sold;
         line("Vente sur le pool", fmt(r.p33Sold) + " p33 → " + fmt(r.wavaxOut, 6) + " WAVAX", true);
         line("Cours obtenu", fmt(price, 6) + " WAVAX par p33");
-        const floor = (price * 75n) / 100n;
-        line("Prix plancher conseillé (−25 %)", E.formatEther(floor - (floor % 10n ** 12n)));
-        if (!$("cFloor").value) $("cFloor").value = E.formatEther(floor - (floor % 10n ** 12n));
       } else if (r.deposited) {
         line("Vente sur le pool", "échec", false);
       }
@@ -708,10 +710,10 @@
 
   // ── actions ──
   $("createBtn").onclick = () => run("Création du vault", async () => {
-    const floor = parseAmount($("cFloor").value);
     const maxPrice = parseAmount($("cMaxPrice").value);
-    if (floor === 0n || maxPrice === 0n) throw new Error("Les deux prix doivent être supérieurs à zéro.");
-    const tx = await factory.createVault(floor, maxPrice, $("cReinvest").checked ? maxPrice * 10n : 0n);
+    if (maxPrice === 0n) throw new Error("Le prix maximum du ticket doit être supérieur à zéro.");
+    // 1000 = vente refusée à plus de 10 % sous le cours de référence
+    const tx = await factory.createVault(1000, maxPrice, $("cReinvest").checked ? snap.price * 10n : 0n);
     await tx.wait();
     await loadVault();
   });
@@ -772,7 +774,7 @@
     const canBuy = snap.price > 0n && snap.budget >= snap.price;
     if (amount === 0n && !canBuy && snap.claimable === 0n && !claims.length) {
       throw new Error(snap.harvestable > 0n
-        ? "Rien à faire : le cours du p33 est sous ton prix plancher et le budget ne couvre pas un ticket."
+        ? "Rien à faire : le cours du p33 est trop loin sous le cours de référence (la vente repassera au prochain passage) et le budget ne couvre pas un ticket."
         : "Rien à faire pour l'instant : pas de rendement à vendre, pas de gain à réclamer, pas de budget pour un ticket.");
     }
     status("Cycle : confirme dans ton wallet…" + (claims.length ? " (" + claims.length + " ticket(s) gagnant(s) inclus)" : ""));
@@ -792,8 +794,12 @@
     return vault.withdrawWavax(snap.winnings, account);
   });
 
-  $("guardsBtn").onclick = () => run("Garde-fous", () => vault.setGuards(parseAmount($("sFloor").value), parseAmount($("sMaxPrice").value)));
-  $("sReinvest").onchange = (ev) => run("Réglage des gains", () => vault.setReinvestCap(ev.target.checked ? snap.maxPrice * 10n : 0n));
+  $("guardsBtn").onclick = () => run("Garde-fous", async () => {
+    const pct = Number(String($("sDev").value).replace(",", "."));
+    if (!(pct > 0 && pct <= 50)) throw new Error("L'écart maximal doit être entre 0 et 50 %.");
+    return vault.setGuards(parseAmount($("sFloor").value), parseAmount($("sMaxPrice").value), Math.round(pct * 100));
+  });
+  $("sReinvest").onchange = (ev) => run("Réglage des gains", () => vault.setReinvestCap(ev.target.checked ? snap.price * 10n : 0n));
   $("keeperBtn").onclick = () => run("Changement de robot", async () => {
     const k = $("sKeeper").value.trim();
     if (!E.isAddress(k)) throw new Error("Adresse invalide.");
