@@ -826,6 +826,7 @@ test("results bot: the latest draw is published once to the Telegram chat, with 
   assert.match(fr, /Numéros sortis\n<b>1 {2}2 {2}3 {2}4 {2}5 {2}6 {2}7<\/b> {2}\+ {2}<b>1 {2}3<\/b>/);
   assert.match(fr, /2 tickets joués, 0,3 WAVAX en jeu\.\nGagnants : 1 ticket au rang 11 \(0,019 WAVAX à partager\)\./);
   assert.match(fr, /Prochain tirage .* à 18:00 : 0,15 WAVAX déjà en jeu, ticket à 0,19 WAVAX\.$/);
+  assert.equal(buildMessage(data, { lang: "fr", tz: "UTC", short: true }), "Gagnants : 1 ticket au rang 11 (0,019 WAVAX à partager).", "under the picture, only the winners");
   const en = buildMessage({ ...data, byRank: new Map(), next: null }, { lang: "en", tz: "UTC" });
   assert.match(en, /No winning ticket: the prizes roll over/);
   assert.match(en, /The next draw is not open yet\.$/);
@@ -855,6 +856,8 @@ test("results bot: the latest draw is published once to the Telegram chat, with 
   assert.match(card, /Tirage n° 1/);
   assert.equal((card.match(/class="ball"/g) || []).length, 7);
   assert.equal((card.match(/class="ball extra"/g) || []).length, 2);
-  assert.match(card, /<b>100,15<\/b><span>WAVAX, cagnotte et réserve du jackpot/);
+  assert.match(card, /<b>100,15<\/b><span>WAVAX à gagner, reports compris/);
+  await (await s.lottery.setRankRollover(1, E("50"))).wait();
+  assert.equal((await collect(s.lottery, draw)).reserve, E("50"), "the rollovers of all ranks, read on chain");
   server.close();
 });

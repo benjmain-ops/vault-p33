@@ -105,12 +105,12 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   await page.goto(url);
   await page.waitForFunction(() => /dans \d+ h \d\d min \d\d s/.test(document.getElementById("headline").textContent));
   assert.match(await text("headline"), /^Tirage du (matin|soir) dans \d+ h \d\d min \d\d s$/);
-  assert.match(await text("leadSub"), /Tirage n° 2\. 1 ticket joué, 0,14 WAVAX en jeu/);
+  assert.match(await text("leadSub"), /Tirage n° 2\. 1 ticket joué, \d+,\d+ WAVAX à gagner/);
   await page.waitForFunction(() => document.getElementById("facts").textContent.includes("12,5"));
   await page.waitForSelector("#lastBalls .ball");
   assert.equal(await text("lastBalls"), "94718152316+13", "the last draw, as balls under the headline");
   await pause(2200);
-  assert.match(await text("facts"), /En jeu pour l'instant0,1456 WAVAX.*Tickets joués1.*Prix du ticket0,1821 WAVAX.*Réserve du jackpot12,5 WAVAX/);
+  assert.match(await text("facts"), /À gagner, reports compris2,14 WAVAX.*Dont ventes de ce tirage0,1456 WAVAX.*Tickets joués1.*Prix du ticket0,1821 WAVAX.*Réserve du jackpot12,5 WAVAX/);
   const rows = await page.$$eval("#ranks tr", (trs) => trs.map((tr) => [...tr.children].map((td) => td.textContent)));
   assert.equal(rows.length, 12);
   assert.deepEqual(rows[0], ["6 + 2", "2,052 WAVAX", "1 sur 192 280"], "rank 1: 36% of the pool plus the rollover, odds of 6+2");

@@ -22,8 +22,7 @@ const LOTTERY_ABI = [
   "function ticketPrice() view returns (uint256)",
   "function currentDrawId() view returns (uint256)",
   "function getDrawTickets(uint256) view returns (uint256[])",
-  "function jackpotFundAddress() view returns (address)",
-  "function token() view returns (address)",
+  "function rankRollover(uint256) view returns (uint256)",
   "function getDraw(uint256) view returns (tuple(uint256 id,uint256 scheduledTime,uint256 drawnAt,uint8[7] winningMain,uint8[2] winningComp,uint256 prizePool,uint256[12] rankPools,uint256 drawVolume,bool isRun2,bool finalized,bool hasRank1Winner,bytes32 merkleRoot))",
   "function getTicket(uint256) view returns (tuple(uint256 id,uint256 drawId,address owner,uint8[9] mainNumbers,uint8[3] compNumbers,bool isSystemPlay,uint8 systemMainCount,uint8 systemCompCount,uint8 rank,bool claimed,uint256 grossWinAmount))",
 ];
@@ -41,7 +40,7 @@ const TEXT = {
     notOpen: "Le prochain tirage n'est pas encore ouvert.",
     play: (site) => `Jouer sur ${site}`,
     cardTitle: "Loterie AVAX", cardDraw: (n) => `Tirage n° ${n}`, cardSold: "tickets joués", cardPool: "WAVAX en jeu", cardWinners: "tickets gagnants",
-    cardNext: (when) => `Prochain tirage ${when}`, cardJackpot: "WAVAX, cagnotte et réserve du jackpot",
+    cardNext: (when) => `Prochain tirage ${when}`, cardJackpot: "WAVAX à gagner, reports compris",
     at: "à",
   },
   en: {
@@ -56,7 +55,7 @@ const TEXT = {
     notOpen: "The next draw is not open yet.",
     play: (site) => `Play on ${site}`,
     cardTitle: "AVAX lottery", cardDraw: (n) => `Draw no. ${n}`, cardSold: "tickets played", cardPool: "WAVAX in play", cardWinners: "winning tickets",
-    cardNext: (when) => `Next draw ${when}`, cardJackpot: "WAVAX, prize pool and jackpot reserve",
+    cardNext: (when) => `Next draw ${when}`, cardJackpot: "WAVAX to win, rollovers included",
     at: "at",
   },
 };
@@ -96,18 +95,26 @@ async function collect(lottery, draw) {
   for (const t of tickets) { const r = bestRank(t, draw); if (r) byRank.set(r, (byRank.get(r) || 0) + 1); }
   const [currentId, price] = await Promise.all([lottery.currentDrawId(), lottery.ticketPrice()]);
   const next = currentId > draw.id ? await lottery.getDraw(currentId) : null;
-  // the jackpot reserve: what the lottery's jackpot fund holds, on top of the pool of the open draw
+  // What the next draw can pay: its own pool, plus what earlier draws left unwon in each rank
+  // (the rank 1 rollover is the jackpot that builds up).
   let reserve = 0n;
   try {
-    const [fund, token] = await Promise.all([lottery.jackpotFundAddress(), lottery.token()]);
-    if (fund !== ethers.ZeroAddress) reserve = await new ethers.Contract(token, ["function balanceOf(address) view returns (uint256)"], lottery.runner).balanceOf(fund);
+    const rolled = await Promise.all([...Array(12).keys()].map((i) => lottery.rankRollover(i + 1)));
+    reserve = rolled.reduce((a, x) => a + x, 0n);
   } catch {}
   return { draw, sold: tickets.length, byRank, next: next && next.drawnAt === 0n ? next : null, price, reserve };
 }
 
 /** The message, in Telegram's HTML. */
-function buildMessage({ draw, sold, byRank, next, price }, { lang = "fr", tz = "Europe/Paris" } = {}) {
+function buildMessage({ draw, sold, byRank, next, price }, { lang = "fr", tz = "Europe/Paris", short = false } = {}) {
   const L = TEXT[lang] || TEXT.fr;
+  const winnersLine = () => {
+    if (!byRank.size) return L.none;
+    const parts = [...byRank.keys()].sort((a, b) => a - b).map((r) => L.rank(r, byRank.get(r), draw.finalized && draw.rankPools[r - 1] > 0n ? fmt(draw.rankPools[r - 1], 3, L.locale) : ""));
+    return L.winners + parts.join(L.sep) + ".";
+  };
+  // Under the picture, only what the picture does not say: who won what.
+  if (short) return esc(winnersLine());
   const when = (ts) => {
     const d = new Date(Number(ts) * 1000);
     const day = d.toLocaleDateString(L.locale, { weekday: "short", day: "numeric", month: "short", timeZone: tz });
@@ -262,9 +269,9 @@ async function main() {
   const lang = env.ANNOUNCE_LANG === "en" ? "en" : "fr";
   const tz = env.ANNOUNCE_TZ || "Europe/Paris";
   const data = await collect(lottery, draw);
-  const text = buildMessage(data, { lang, tz });
   // a picture of the result, unless switched off or no browser is there to draw it (then: text only)
   const photo = env.ANNOUNCE_CARD === "off" ? null : renderCard(data, { lang, tz });
+  const text = buildMessage(data, { lang, tz, short: !!photo });
   if (env.CARD_FILE && photo) fs.copyFileSync(photo, env.CARD_FILE);
   // The button points to the lottery's own site, unless another address is configured
   // (PLAY_URL=none removes the button).
