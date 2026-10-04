@@ -1,0 +1,84 @@
+# Results bot: publishes each draw of the AVAX lottery to a Telegram chat. See README, "Results bot".
+# Read-only on the chain: this workflow holds no wallet key.
+#
+# Draws are at 06:00 and 18:00 UTC. Two runs after each draw: the second one only publishes if
+# the first one did not (the cache remembers which draw was published).
+name: results
+
+on:
+  schedule:
+    - cron: "23 6,7,18,19 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Publish the latest draw even if it was already published or is old"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: write # the cache that remembers the last draw published, and the keep-alive step
+
+concurrency:
+  group: results
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch the code
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git clone --quiet --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" .
+          git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
+
+      - name: Install dependencies
+        run: npm ci --prefix keeper --ignore-scripts --no-audit --no-fund
+
+      - name: Latest draw
+        id: draw
+        env:
+          RPC_URL: ${{ secrets.RPC_URL }}
+        run: echo "id=$(node keeper/announce.js latest)" >> "$GITHUB_OUTPUT"
+
+      - name: Already published?
+        id: seen
+        if: steps.draw.outputs.id != ''
+        uses: actions/cache/restore@v4
+        with:
+          path: .published
+          key: published-draw-${{ steps.draw.outputs.id }}
+          lookup-only: true
+
+      - name: Publish
+        if: steps.draw.outputs.id != '' && (steps.seen.outputs.cache-hit != 'true' || inputs.force)
+        env:
+          DRAW_ID: ${{ steps.draw.outputs.id }}
+          RPC_URL: ${{ secrets.RPC_URL }}
+          ANNOUNCE_BOT_TOKEN: ${{ secrets.ANNOUNCE_BOT_TOKEN }}
+          ANNOUNCE_CHAT: ${{ secrets.ANNOUNCE_CHAT }}
+          ANNOUNCE_LANG: ${{ vars.ANNOUNCE_LANG || secrets.ANNOUNCE_LANG }}
+          ANNOUNCE_TZ: ${{ vars.ANNOUNCE_TZ || secrets.ANNOUNCE_TZ }}
+          PLAY_URL: ${{ vars.PLAY_URL }}
+          FORCE: ${{ inputs.force && '1' || '' }}
+          PUBLISHED_FILE: .published/draw
+        run: |
+          mkdir -p .published
+          node keeper/announce.js post "$DRAW_ID"
+
+      - name: Remember this draw
+        if: hashFiles('.published/draw') != '' && steps.seen.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .published
+          key: published-draw-${{ steps.draw.outputs.id }}
+
+      # GitHub disables scheduled workflows of public repositories after 60 days without activity.
+      - name: Keep the schedule enabled
+        if: always() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/results.yml/enable" || true

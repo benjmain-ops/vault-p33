@@ -793,3 +793,57 @@ test("player bot: private recap of a pass, empty when nothing happened", async (
   r = await runPlayer({ signer: s.player, vaultAddress: s.vault.target, cfg: { ...cfg, dryRun: true } });
   assert.match(recap(r, { always: true }), /\(dry run, nothing sent\)/);
 });
+
+test("results bot: the latest draw is published once to the Telegram chat, with numbers, winners and the next draw", async () => {
+  const http = require("http");
+  const { latestExecuted, collect, buildMessage, send } = require("../keeper/announce");
+  const s = await setup();
+  assert.equal(await latestExecuted(s.lottery), null, "no draw yet");
+
+  // draw 1: two tickets, one of them matches 3 numbers and 1 extra (rank 11)
+  await s.openDraw(3600n);
+  await (await s.wavax.connect(s.player).approve(s.lottery.target, E("10"))).wait();
+  await (await s.lottery.connect(s.player).buyMultipleTickets(1, [[1, 2, 3, 10, 11, 12], [13, 14, 15, 16, 17, 18]], [[1, 2], [4, 5]], [false, false])).wait();
+  await s.warp(3700n);
+  const pools = Array(12).fill(0n);
+  pools[10] = E("0.0199");
+  await (await s.lottery.setResult(1, [1, 2, 3, 4, 5, 6, 7], [1, 3], pools)).wait();
+  // draw 2 is open, with one ticket
+  await (await s.lottery.createDraw(1791223200n + 86400n * 3650n)).wait(); // far in the future, fixed for the text below
+  await (await s.lottery.connect(s.player).buyMultipleTickets(2, [[1, 2, 3, 4, 5, 6]], [[1, 2]], [false])).wait();
+
+  const draw = await latestExecuted(s.lottery);
+  assert.equal(draw.id, 1n);
+  const data = await collect(s.lottery, draw);
+  assert.equal(data.sold, 2);
+  assert.deepEqual([...data.byRank], [[11, 1]]);
+  const fr = buildMessage(data, { lang: "fr", tz: "UTC" });
+  assert.match(fr, /^<b>Loterie AVAX, tirage n° 1<\/b>\n/);
+  assert.match(fr, /Numéros sortis\n<b>1 {2}2 {2}3 {2}4 {2}5 {2}6 {2}7<\/b> {2}\+ {2}<b>1 {2}3<\/b>/);
+  assert.match(fr, /2 tickets joués, 0,3 WAVAX en jeu\.\nGagnants : rang 11 : 1 ticket, 0,019 WAVAX à partager\./);
+  assert.match(fr, /Prochain tirage .* à 18:00 : 0,15 WAVAX déjà en jeu, ticket à 0,19 WAVAX\.$/);
+  const en = buildMessage({ ...data, byRank: new Map(), next: null }, { lang: "en", tz: "UTC" });
+  assert.match(en, /No winning ticket: the prizes roll over/);
+  assert.match(en, /The next draw is not open yet\.$/);
+
+  // sending: one request to the bot API, with the play button; a refusal is reported without the token
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      seen.push({ url: req.url, body: JSON.parse(body) });
+      const ok = !req.url.includes("bad");
+      res.writeHead(ok ? 200 : 403, { "content-type": "application/json" }).end(JSON.stringify(ok ? { ok: true, result: { chat: { title: "secret name" } } } : { ok: false, description: "Forbidden: bot is not a member of the channel chat" }));
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const api = `http://127.0.0.1:${server.address().port}`;
+  await send({ token: "123:abc", chat: "@results", text: fr, playUrl: "https://example.org/play/", lang: "fr", api });
+  assert.equal(seen[0].url, "/bot123:abc/sendMessage");
+  assert.equal(seen[0].body.chat_id, "@results");
+  assert.equal(seen[0].body.parse_mode, "HTML");
+  assert.deepEqual(seen[0].body.reply_markup, { inline_keyboard: [[{ text: "Jouer sur Sixte", url: "https://example.org/play/" }]] });
+  await assert.rejects(send({ token: "bad", chat: "@results", text: fr, api }), /Telegram refused the message \(403, Forbidden: bot is not a member/);
+  server.close();
+});

@@ -13,7 +13,7 @@ const lib = require("../keeper/lib");
 const WEB = path.join(__dirname, "..", "docs");
 const SHOTS = process.env.SHOTS_DIR;
 const VIDEO = process.env.VIDEO_DIR; // records the phone-sized run, with pauses that make it watchable
-const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/svg+xml", ".woff2": "font/woff2" };
+const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/svg+xml", ".woff2": "font/woff2", ".png": "image/png", ".webmanifest": "application/manifest+json" };
 
 (async () => {
   const gp = ganache.provider({ logging: { quiet: true }, chain: { chainId: 43114, hardfork: "shanghai" }, wallet: { totalAccounts: 3, defaultBalance: 1000 } });
@@ -226,12 +226,34 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   step("anglais, et mise en page large");
 
   // 7. no wallet in the browser: the dialog offers to reopen the page in Trust Wallet
-  const bare = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const bare = await browser.newPage({ viewport: { width: 390, height: 844 }, locale: "fr-FR" });
   await bare.goto(url);
+  assert.equal(await bare.isHidden("#install"), true, "no install banner until the browser offers it");
+  await bare.evaluate(() => { const e = new Event("beforeinstallprompt"); e.prompt = () => (window.prompted = true); e.userChoice = Promise.resolve({ outcome: "accepted" }); window.dispatchEvent(e); });
+  assert.match(await bare.textContent("#install"), /Installe Sixte sur ton écran d'accueil.*Installer.*Plus tard/s);
+  await bare.click("#installBtn");
+  assert.equal(await bare.evaluate(() => window.prompted), true);
+  assert.equal(await bare.isHidden("#install"), true);
+  await bare.click("#flashBtn");
+  const line = await bare.evaluate(() => [...document.querySelectorAll("#mainGrid .box[aria-pressed=true] span")].map((x) => x.textContent).join(".") + "-" + [...document.querySelectorAll("#compGrid .box[aria-pressed=true] span")].map((x) => x.textContent).join("."));
   await bare.click("#connectBtn");
   assert.ok(await bare.isVisible("#openInTrust"));
+  assert.ok(await bare.isVisible("#openInMetaMask"));
+  let forwarded = null;
+  await bare.route("https://link.trustwallet.com/**", (route) => { forwarded = route.request().url(); route.abort(); });
+  await bare.click("#openInTrust").catch(() => {});
+  await bare.waitForTimeout(500);
+  assert.equal(forwarded, "https://link.trustwallet.com/open_url?coin_id=10009000&url=" + encodeURIComponent(url + "?g=" + line), "the line travels to the wallet's browser");
+  // ... and arrives filled in
+  await bare.goto(url + "?g=" + line + "_1.2.3.4.5.6-1.2_9.9.9.9.9.9-1.2_1.2.3.4.5.25-1.2");
+  await bare.waitForFunction(() => document.getElementById("stubLines").textContent === "2 grilles complètes");
+  assert.equal(await bare.$$eval("#lineTabs .line-tab.full", (x) => x.length), 2, "invalid lines are dropped");
+  const manifest = JSON.parse(fs.readFileSync(path.join(WEB, "play", "manifest.webmanifest"), "utf8"));
+  for (const icon of manifest.icons) assert.ok(fs.existsSync(path.join(WEB, "play", icon.src)), icon.src);
+  assert.match(await bare.getAttribute('meta[property="og:image"]', "content"), /\/play\/og\.png$/);
+  assert.ok(fs.existsSync(path.join(WEB, "play", "og.png")));
   await bare.close();
-  step("sans wallet : renvoi vers Trust Wallet");
+  step("sans wallet : installation, renvoi vers le wallet avec la grille, aperçu de lien");
 
   assert.deepEqual(errors, []);
   const video = VIDEO ? await page.video().path() : null;

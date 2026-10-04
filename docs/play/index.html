@@ -7,6 +7,19 @@
 <meta name="description" content="Sixte : une interface indépendante pour jouer à la loterie AVAX. 6 numéros sur 24, deux tirages par jour.">
 <meta name="theme-color" content="#EDF0F3">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Sixte">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Sixte">
+<meta property="og:description" content="Loterie AVAX : 6 numéros sur 24, deux tirages par jour. Coche ta grille et joue depuis ton wallet.">
+<meta property="og:url" content="https://benjmain-ops.github.io/vault-p33/play/">
+<meta property="og:image" content="https://benjmain-ops.github.io/vault-p33/play/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
 <style>
   @font-face {
     font-family: "Archivo";
@@ -58,6 +71,11 @@
   .btn.primary:disabled { background: #9AA6C7; border-color: #9AA6C7; }
   .btn.quiet { border-color: transparent; padding-inline: 10px; color: var(--muted); }
   .btn.small { min-height: 38px; padding: 7px 12px; font-size: 0.9375rem; }
+
+  /* offer to install the page on the home screen */
+  .install { display: flex; justify-content: space-between; align-items: center; gap: 10px 14px; flex-wrap: wrap; background: var(--paper); border-radius: 8px; padding: 12px 14px; box-shadow: 0 0 0 1px var(--rule); }
+  .install p { margin: 0; flex: 1 1 220px; }
+  .install div { display: flex; gap: 6px; }
 
   /* lead: the countdown is the headline */
   .lead { padding: 20px 0 22px; }
@@ -259,6 +277,11 @@
     </div>
   </header>
 
+  <div class="install" id="install" hidden>
+    <p id="installText"></p>
+    <div><button class="btn small primary" id="installBtn" type="button"></button><button class="btn small quiet" id="installLater" type="button"></button></div>
+  </div>
+
   <main>
     <section class="lead">
       <h1 id="headline" class="num">&nbsp;</h1>
@@ -380,8 +403,10 @@
       footIndep: "Sixte est une interface indépendante, sans lien avec BCM DAO. Les tickets sont achetés directement sur le contrat de la loterie AVAX, sans intermédiaire : Sixte ne détient jamais tes fonds.",
       footRisk: "Jeu d'argent : en moyenne, la mise est perdue. Le contrat de la loterie n'est pas audité. Ne joue que ce que tu peux te permettre de perdre.",
       footContract: "Voir le contrat de la loterie",
-      dlgTitle: "Connecter un wallet", dlgClose: "Fermer", browserWallet: "Wallet du navigateur", openTrust: "Ouvrir dans Trust Wallet",
-      dlgNoWallet: "Aucun wallet dans ce navigateur. Le bouton rouvre cette page dans l'app Trust Wallet. Sur ordinateur, installe l'extension d'un wallet.",
+      dlgTitle: "Connecter un wallet", dlgClose: "Fermer", browserWallet: "Wallet du navigateur", openTrust: "Ouvrir dans Trust Wallet", openMetaMask: "Ouvrir dans MetaMask",
+      dlgNoWallet: "Aucun wallet ici. Ouvre Sixte dans l'app de ton wallet : tes grilles te suivent. Sur ordinateur, installe l'extension d'un wallet.",
+      installText: "Installe Sixte sur ton écran d'accueil : elle s'ouvre comme une app.", installBtn: "Installer", installLater: "Plus tard",
+      installIos: "Pour installer Sixte : touche Partager, puis « Sur l'écran d'accueil ».", installOk: "Compris",
       dlgHint: "Réseau : Avalanche C-Chain.",
       eRejected: "Transaction refusée dans le wallet.", eClosed: "Ce tirage n'accepte plus d'achats.", eNumbers: "Une grille est invalide.", eFunds: "Pas assez d'AVAX pour les frais.",
       ePay: "Le paiement en WAVAX a échoué.", eNothing: "Rien à encaisser.", ePaused: "La loterie est en pause.", eOther: "Échec : ",
@@ -421,8 +446,10 @@
       footIndep: "Sixte is an independent interface, not affiliated with BCM DAO. Tickets are bought directly on the AVAX lottery contract, with no intermediary: Sixte never holds your funds.",
       footRisk: "Gambling: on average the stake is lost. The lottery contract is unaudited. Only play what you can afford to lose.",
       footContract: "View the lottery contract",
-      dlgTitle: "Connect a wallet", dlgClose: "Close", browserWallet: "Browser wallet", openTrust: "Open in Trust Wallet",
-      dlgNoWallet: "No wallet in this browser. The button reopens this page inside the Trust Wallet app. On a computer, install a wallet extension.",
+      dlgTitle: "Connect a wallet", dlgClose: "Close", browserWallet: "Browser wallet", openTrust: "Open in Trust Wallet", openMetaMask: "Open in MetaMask",
+      dlgNoWallet: "No wallet here. Open Sixte inside your wallet's app: your lines come along. On a computer, install a wallet extension.",
+      installText: "Install Sixte on your home screen: it opens like an app.", installBtn: "Install", installLater: "Later",
+      installIos: "To install Sixte: tap Share, then “Add to Home Screen”.", installOk: "Got it",
       dlgHint: "Network: Avalanche C-Chain.",
       eRejected: "Transaction rejected in the wallet.", eClosed: "This draw no longer takes purchases.", eNumbers: "A line is invalid.", eFunds: "Not enough AVAX for fees.",
       ePay: "The WAVAX payment failed.", eNothing: "Nothing to collect.", ePaused: "The lottery is paused.", eOther: "Failed: ",
@@ -469,6 +496,25 @@
     busy: false, tab: "mine",
   };
   const complete = (l) => l.main.length === 6 && l.comp.length === 2;
+  // Complete lines can travel in the address (?g=1.3.9.14.17.21-2.5_...), so that a slip filled in
+  // here follows the player into the wallet's own browser.
+  const sorted = (a) => [...a].sort((x, y) => x - y);
+  const encodeLines = () => S.lines.filter(complete).map((l) => sorted(l.main).join(".") + "-" + sorted(l.comp).join(".")).join("_");
+  function decodeLines(str) {
+    const valid = (arr, n, max) => arr.length === n && new Set(arr).size === n && arr.every((x) => Number.isInteger(x) && x >= 1 && x <= max);
+    const out = [];
+    for (const part of String(str || "").split("_").slice(0, MAX_LINES)) {
+      const [m = "", c = ""] = part.split("-");
+      const main = m.split(".").map(Number), comp = c.split(".").map(Number);
+      if (valid(main, 6, 24) && valid(comp, 2, 5)) out.push({ main, comp });
+    }
+    return out;
+  }
+  const appUrl = () => { const g = encodeLines(); return location.origin + location.pathname + (g ? "?g=" + g : ""); };
+  {
+    const carried = decodeLines(new URLSearchParams(location.search).get("g"));
+    if (carried.length) S.lines = carried;
+  }
   const isOpen = () => S.draw && !S.paused && S.draw.drawnAt === 0n && Date.now() / 1000 < Number(S.draw.scheduledTime);
 
   // ── formatting ──
@@ -849,7 +895,7 @@
     $("tabMine").setAttribute("aria-selected", String(S.tab === "mine")); $("tabResults").setAttribute("aria-selected", String(S.tab === "results"));
     $("mine").hidden = S.tab !== "mine"; $("results").hidden = S.tab !== "results";
   }
-  function renderAll() { renderChrome(); renderLead(); renderLast(); renderSlip(); renderFacts(); renderMine(); renderResults(); }
+  function renderAll() { renderChrome(); renderInstall(); renderLead(); renderLast(); renderSlip(); renderFacts(); renderMine(); renderResults(); }
 
   // ── loading ──
   const soft = (p, fallback) => p.catch(() => fallback);
@@ -928,8 +974,12 @@
     if (!found.size && !window.ethereum) {
       const b = document.createElement("button");
       b.type = "button"; b.className = "btn primary"; b.id = "openInTrust"; b.textContent = L.openTrust;
-      b.onclick = () => { location.href = "https://link.trustwallet.com/open_url?coin_id=10009000&url=" + encodeURIComponent(location.href); };
+      b.onclick = () => { location.href = "https://link.trustwallet.com/open_url?coin_id=10009000&url=" + encodeURIComponent(appUrl()); };
       box.appendChild(b);
+      const m = document.createElement("button");
+      m.type = "button"; m.className = "btn"; m.id = "openInMetaMask"; m.textContent = L.openMetaMask;
+      m.onclick = () => { location.href = "https://metamask.app.link/dapp/" + appUrl().replace(/^https?:\/\//, ""); };
+      box.appendChild(m);
       $("dlgHint").textContent = L.dlgNoWallet;
     } else $("dlgHint").textContent = L.dlgHint;
     $("walletDlg").showModal();
@@ -1034,6 +1084,31 @@
     };
     return { main: pick(24, 6), comp: pick(5, 2) };
   }
+
+  // ── install on the home screen ──
+  let installEvent = null;
+  const standalone = (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true;
+  const onIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  function renderInstall() {
+    const box = $("install");
+    // iOS has no install prompt: its own browser needs the steps spelled out. Nothing can be
+    // installed from inside a wallet's browser.
+    const iosHint = onIos && !window.ethereum;
+    if (standalone || store.get("install") === "later" || (!installEvent && !iosHint)) { box.hidden = true; return; }
+    box.hidden = false;
+    $("installText").textContent = installEvent ? L.installText : L.installIos;
+    $("installBtn").hidden = !installEvent; $("installBtn").textContent = L.installBtn;
+    $("installLater").textContent = installEvent ? L.installLater : L.installOk;
+  }
+  window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installEvent = e; renderInstall(); });
+  window.addEventListener("appinstalled", () => { installEvent = null; renderInstall(); });
+  $("installBtn").onclick = async () => {
+    if (!installEvent) return;
+    installEvent.prompt();
+    try { await installEvent.userChoice; } catch (_) {}
+    installEvent = null; renderInstall();
+  };
+  $("installLater").onclick = () => { store.set("install", "later"); renderInstall(); };
 
   // ── wiring ──
   $("flashBtn").onclick = () => { S.lines[S.active] = randomLine(); S.fresh = "all"; S.pop = S.active; renderSlip(); };

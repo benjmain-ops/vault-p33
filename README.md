@@ -16,6 +16,7 @@ Web page: `docs/` (GitHub Pages). Everything can be done from a phone, inside a 
 | Player bot | `keeper/player.js` | Runs with the key of a dedicated player wallet: triggers the vault, buys the tickets in the wallet's own name, claims its prizes |
 | Vault keeper | `keeper/index.js` | Alternative bot for vaults that buy the tickets themselves |
 | Schedule | `.github/workflows/play.yml` | Runs the player bot before each draw |
+| Results bot | `keeper/announce.js`, `.github/workflows/results.yml` | Publishes each draw's result to a Telegram chat. Read-only, no wallet key |
 | Web page | `docs/` | Wallet connection, vault creation, deposit, withdrawal, settings, dry run |
 | Play page | `docs/play/` | "Sixte", an independent interface to the lottery itself: pick numbers, buy tickets, see results, claim prizes. No vault needed |
 | Tests | `test/` | Contracts and bots on a local chain, and the page in a real browser |
@@ -141,6 +142,34 @@ Things to know:
   hours before each draw.
 
 The bot can also run anywhere Node.js runs: `cp .env.example .env`, fill it in, `npm run player`.
+
+## Results bot
+
+After each draw, a scheduled workflow publishes the result to a Telegram chat: numbers drawn,
+tickets played, prize pool, winners by rank, and the next draw, with a button that opens the play
+page. It only reads the chain.
+
+1. Create a bot for this with **@BotFather** (`/newbot`). Do not reuse a bot whose token is used
+   for anything private.
+2. Create a channel (or a group) and add the bot as an administrator allowed to post messages.
+3. Add two repository secrets: `ANNOUNCE_BOT_TOKEN`, and `ANNOUNCE_CHAT` (the channel's `@name`,
+   or its numeric id for a private one).
+4. In **Actions → results → Run workflow**, tick "force" to publish the latest draw as a test.
+
+Optional: `ANNOUNCE_LANG` (`fr` by default, or `en`), `ANNOUNCE_TZ` (time zone of the dates,
+`Europe/Paris` by default), `PLAY_URL` (address behind the button; by default the play page of
+this repository's GitHub Pages).
+
+Telegram requires Mini Apps that use crypto-assets to be built on TON only. This bot is not a
+Mini App, it only posts messages; whether a link to an Avalanche page is welcome in your channel
+remains your call, and so does the law on advertising games of chance where you live.
+
+## Install the play page
+
+The play page can be added to a phone's home screen and then opens full screen like an app (a
+banner offers it where the browser allows; on iPhone: Share, then "Add to Home Screen"). An
+installed page has no wallet of its own: "Connect" reopens it inside the wallet's app, with the
+lines already filled in. `npm run play:assets` regenerates its icons and link-preview image.
 
 ## Development
 
