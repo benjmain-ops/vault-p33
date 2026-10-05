@@ -16,7 +16,7 @@ Web page: `docs/` (GitHub Pages). Everything can be done from a phone, inside a 
 | Player bot | `keeper/player.js` | Runs with the key of a dedicated player wallet: triggers the vault, buys the tickets in the wallet's own name, claims its prizes |
 | Vault keeper | `keeper/index.js` | Alternative bot for vaults that buy the tickets themselves |
 | Schedule | `.github/workflows/play.yml` | Runs the player bot before each draw |
-| Results bot | `keeper/announce.js`, `.github/workflows/results.yml` | Publishes each draw's result to a Telegram chat. Read-only, no wallet key |
+| Results bot | `keeper/announce.js`, `.github/workflows/results.yml`, `teaser.yml` | Publishes each draw's result to a Telegram chat. Read-only, no wallet key |
 | Web page | `docs/` | Wallet connection, vault creation, deposit, withdrawal, settings, dry run |
 | Play page | `docs/play/` | "Sixte", an independent interface to the lottery itself: pick numbers, buy tickets, see results, claim prizes. No vault needed |
 | Tests | `test/` | Contracts and bots on a local chain, and the page in a real browser |
@@ -162,6 +162,10 @@ Optional: `ANNOUNCE_LANG` (`fr` by default, or `en`), `ANNOUNCE_TZ` (time zone o
 own site, `none` to remove the button), `ANNOUNCE_CARD` (`still` to post a still picture instead
 of the short animation that the workflow draws with the runner's Chrome and ffmpeg, `off` to post
 text only).
+
+A second workflow, **teaser**, posts a short film about half an hour before each draw: what the
+draw can pay, how many draws the jackpot has been rolling, how many tickets are in play. It uses
+the same secrets; set the variable `ANNOUNCE_TEASER` to `off` to keep only the results.
 
 Telegram requires Mini Apps that use crypto-assets to be built on TON only. This bot is not a
 Mini App, it only posts messages; whether a link to an Avalanche page is welcome in your channel

@@ -860,5 +860,17 @@ test("results bot: the latest draw is published once to the Telegram chat, with 
   assert.match(card, /<b><span id="amount">100,15<\/span><i>AVAX<\/i><\/b><span>à gagner, reports compris/);
   await (await s.lottery.setRankRollover(1, E("50"))).wait();
   assert.equal((await collect(s.lottery, draw)).reserve, E("50"), "the rollovers of all ranks, read on chain");
+  // before a draw: the film of the open draw, with its pot, its tickets and the jackpot's streak
+  const { collectTeaser, teaserHtml, teaserText } = require("../keeper/announce");
+  const tease = await collectTeaser(s.lottery);
+  assert.equal(tease.draw.id, 2n);
+  assert.equal(tease.sold, 1);
+  assert.equal(tease.streak, 1, "draw 1 had no rank 1 winner");
+  assert.equal(tease.total, tease.draw.prizePool + E("50"));
+  const film = teaserHtml({ ...tease, streak: 9 }, { lang: "fr", tz: "UTC" });
+  assert.match(film, /<span id="amount">50,15<\/span><i>AVAX<\/i><\/b><span>jackpot reporté depuis 9 tirages/);
+  assert.match(film, /1 ticket en jeu\.<em>Et le tien \?<\/em>/);
+  assert.equal((film.match(/class="ball[^"]*" style="--i:\d">\?</g) || []).length, 9, "the numbers stay unknown");
+  assert.match(teaserText(tease, { lang: "fr", tz: "UTC" }), /^Tirage n° 2, .* à 18:00 : 50,15 WAVAX à gagner, reports compris\. Ticket à 0,19 WAVAX, 1 ticket en jeu pour l'instant\.$/);
   server.close();
 });

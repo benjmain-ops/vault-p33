@@ -1,0 +1,90 @@
+# Before each draw of the AVAX lottery: a short film about the open draw (its pot, its tickets)
+# in the same Telegram chat as the results. See README, "Results bot". Read-only on the chain.
+#
+# Draws are at 06:00 and 18:00 UTC. GitHub often starts scheduled runs late, so the film is
+# planned half an hour ahead, with a spare run; the cache remembers which draw was announced,
+# and the bot posts nothing once the draw is less than two minutes away.
+name: teaser
+
+on:
+  schedule:
+    - cron: "30,44 5,17 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Announce the open draw even if it was already announced or is far away"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: write # the cache that remembers the last draw announced, and the keep-alive step
+
+concurrency:
+  group: teaser
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch the code
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git clone --quiet --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" .
+          git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
+
+      - name: Install dependencies
+        run: npm ci --prefix keeper --ignore-scripts --no-audit --no-fund
+
+      - name: Film tools
+        run: command -v ffmpeg >/dev/null || sudo apt-get install -y -qq ffmpeg >/dev/null 2>&1 || true
+
+      - name: Open draw
+        id: draw
+        env:
+          RPC_URL: ${{ secrets.RPC_URL }}
+          FORCE: ${{ inputs.force && '1' || '' }}
+        run: echo "id=$(node keeper/announce.js open)" >> "$GITHUB_OUTPUT"
+
+      - name: Already announced?
+        id: seen
+        if: steps.draw.outputs.id != ''
+        uses: actions/cache/restore@v4
+        with:
+          path: .announced
+          key: announced-draw-${{ steps.draw.outputs.id }}
+          lookup-only: true
+
+      - name: Publish
+        if: steps.draw.outputs.id != '' && (steps.seen.outputs.cache-hit != 'true' || inputs.force)
+        env:
+          RPC_URL: ${{ secrets.RPC_URL }}
+          ANNOUNCE_BOT_TOKEN: ${{ secrets.ANNOUNCE_BOT_TOKEN }}
+          ANNOUNCE_CHAT: ${{ secrets.ANNOUNCE_CHAT }}
+          ANNOUNCE_LANG: ${{ vars.ANNOUNCE_LANG || secrets.ANNOUNCE_LANG }}
+          ANNOUNCE_TZ: ${{ vars.ANNOUNCE_TZ || secrets.ANNOUNCE_TZ }}
+          PLAY_URL: ${{ vars.PLAY_URL }}
+          ANNOUNCE_CARD: ${{ vars.ANNOUNCE_CARD || secrets.ANNOUNCE_CARD }}
+          ANNOUNCE_TEASER: ${{ vars.ANNOUNCE_TEASER || secrets.ANNOUNCE_TEASER }}
+          FORCE: ${{ inputs.force && '1' || '' }}
+          PUBLISHED_FILE: .announced/draw
+        run: |
+          mkdir -p .announced
+          node keeper/announce.js teaser
+
+      - name: Remember this draw
+        if: hashFiles('.announced/draw') != '' && steps.seen.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .announced
+          key: announced-draw-${{ steps.draw.outputs.id }}
+
+      # GitHub disables scheduled workflows of public repositories after 60 days without activity.
+      - name: Keep the schedule enabled
+        if: always() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/teaser.yml/enable" || true

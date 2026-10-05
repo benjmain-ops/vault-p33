@@ -4,6 +4,8 @@
  *
  *   node keeper/announce.js latest        prints the number of the latest draw that was executed
  *   node keeper/announce.js post [id]     publishes that draw (DRY_RUN=1 prints the message instead)
+ *   node keeper/announce.js open          prints the number of the open draw when it is due within two hours
+ *   node keeper/announce.js teaser        publishes a short film about that draw, before it happens
  *
  * Read-only on the chain: no wallet, no key. It needs a Telegram bot that is allowed to post in
  * the chat (ANNOUNCE_BOT_TOKEN) and the chat itself (ANNOUNCE_CHAT: "@channel" or a numeric id).
@@ -23,6 +25,7 @@ const LOTTERY_ABI = [
   "function currentDrawId() view returns (uint256)",
   "function getDrawTickets(uint256) view returns (uint256[])",
   "function rankRollover(uint256) view returns (uint256)",
+  "function getDrawTicketCount(uint256) view returns (uint256)",
   "function getDraw(uint256) view returns (tuple(uint256 id,uint256 scheduledTime,uint256 drawnAt,uint8[7] winningMain,uint8[2] winningComp,uint256 prizePool,uint256[12] rankPools,uint256 drawVolume,bool isRun2,bool finalized,bool hasRank1Winner,bytes32 merkleRoot))",
   "function getTicket(uint256) view returns (tuple(uint256 id,uint256 drawId,address owner,uint8[9] mainNumbers,uint8[3] compNumbers,bool isSystemPlay,uint8 systemMainCount,uint8 systemCompCount,uint8 rank,bool claimed,uint256 grossWinAmount))",
 ];
@@ -42,6 +45,10 @@ const TEXT = {
     cardTitle: "Loterie AVAX de BCM DAO", cardDraw: (n) => `Tirage n° ${n}`, cardSold: "tickets joués", cardPool: "WAVAX en jeu", cardWinners: "tickets gagnants",
     cardNext: (when) => `Prochain tirage ${when}`, cardJackpot: "à gagner, reports compris",
     at: "à",
+    teaseJackpot: "à gagner, reports compris", teaseStreak: (n) => `jackpot reporté depuis ${n} tirages`,
+    teaseSold: (n) => (n === 0 ? "Aucun ticket pour l'instant." : `${n} ticket${n > 1 ? "s" : ""} en jeu.`),
+    teaseAsk: (n) => (n === 0 ? "Le premier ?" : "Et le tien ?"), teasePrice: (p) => `Ticket à ${p} WAVAX`,
+    teaseText: (n, when, pool, price, sold) => `Tirage n° ${n}, ${when} : ${pool} WAVAX à gagner, reports compris. Ticket à ${price} WAVAX, ${sold} ticket${sold > 1 ? "s" : ""} en jeu pour l'instant.`,
   },
   en: {
     locale: "en-GB",
@@ -57,6 +64,10 @@ const TEXT = {
     cardTitle: "BCM DAO's AVAX lottery", cardDraw: (n) => `Draw no. ${n}`, cardSold: "tickets played", cardPool: "WAVAX in play", cardWinners: "winning tickets",
     cardNext: (when) => `Next draw ${when}`, cardJackpot: "to win, rollovers included",
     at: "at",
+    teaseJackpot: "to win, rollovers included", teaseStreak: (n) => `jackpot rolled over for ${n} draws`,
+    teaseSold: (n) => (n === 0 ? "No ticket yet." : `${n} ticket${n === 1 ? "" : "s"} in play.`),
+    teaseAsk: (n) => (n === 0 ? "The first one?" : "And yours?"), teasePrice: (p) => `Ticket at ${p} WAVAX`,
+    teaseText: (n, when, pool, price, sold) => `Draw no. ${n}, ${when}: ${pool} WAVAX to win, rollovers included. Ticket at ${price} WAVAX, ${sold} ticket${sold === 1 ? "" : "s"} in play so far.`,
   },
 };
 
@@ -216,11 +227,112 @@ function cardHtml({ draw, sold, byRank, next, reserve = 0n }, { lang = "fr", tz 
 </body></html>`;
 }
 
+// the film posted before a draw
+const TEASE_MS = 6600, TEASE_COUNT = [700, 2500], TEASE_SETTLE = (i) => 3300 + i * 190;
+
+/** What the teaser needs about the draw that is open: its pot, its tickets, how long the jackpot has been rolling. */
+async function collectTeaser(lottery) {
+  const id = await lottery.currentDrawId();
+  if (id === 0n) return null;
+  const draw = await lottery.getDraw(id);
+  if (draw.drawnAt > 0n) return null;
+  const [price, sold, rolled] = await Promise.all([lottery.ticketPrice(), lottery.getDrawTicketCount(id),
+    Promise.all([...Array(12).keys()].map((i) => lottery.rankRollover(i + 1))).catch(() => [])]);
+  // consecutive draws before this one that nobody won at rank 1
+  let streak = 0;
+  for (let d = id - 1n; d > 0n && streak < 60; d--) {
+    const past = await lottery.getDraw(d);
+    if (past.drawnAt === 0n) continue;
+    if (past.hasRank1Winner) break;
+    streak++;
+  }
+  return { draw, price, sold: Number(sold), total: draw.prizePool + rolled.reduce((a, x) => a + x, 0n), streak };
+}
+
+function teaserText({ draw, price, sold, total }, { lang = "fr", tz = "Europe/Paris" } = {}) {
+  const L = TEXT[lang] || TEXT.fr;
+  const d = new Date(Number(draw.scheduledTime) * 1000);
+  const when = `${d.toLocaleDateString(L.locale, { weekday: "short", day: "numeric", month: "short", timeZone: tz })} ${L.at} ${d.toLocaleTimeString(L.locale, { hour: "2-digit", minute: "2-digit", timeZone: tz })}`;
+  return esc(L.teaseText(draw.id, when, fmt(total, 2, L.locale), fmt(price, 4, L.locale), sold));
+}
+
+/** The film before a draw: the pot climbs, the balls spin and stay unknown. Same look as the result card. */
+function teaserHtml({ draw, price, sold, total, streak = 0 }, { lang = "fr", tz = "Europe/Paris", font = "" } = {}) {
+  const L = TEXT[lang] || TEXT.fr;
+  const d = new Date(Number(draw.scheduledTime) * 1000);
+  const when = `${d.toLocaleDateString(L.locale, { weekday: "short", day: "numeric", month: "short", timeZone: tz })} ${L.at} ${d.toLocaleTimeString(L.locale, { hour: "2-digit", minute: "2-digit", timeZone: tz })}`;
+  const balls = [...Array(7).keys()].map((i) => `<span class="ball" style="--i:${i}">?</span>`).join("") +
+    `<span class="plus">+</span>` + [7, 8].map((i) => `<span class="ball extra" style="--i:${i}">?</span>`).join("");
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+  ${font ? `@font-face { font-family: "Archivo"; src: url("${font}") format("woff2"); font-weight: 100 900; font-stretch: 62% 125%; }` : ""}
+  * { box-sizing: border-box; }
+  html { min-height: 675px; background: radial-gradient(1000px 560px at 50% 42%, rgba(242, 194, 48, 0.13), transparent 70%), radial-gradient(900px 520px at 78% -10%, rgba(220, 47, 51, 0.38), transparent 70%), radial-gradient(700px 420px at 0% 100%, rgba(220, 47, 51, 0.2), transparent 70%), #0B0D12; }
+  body { margin: 0; width: 100vw; height: 100vh; overflow: hidden; color: #F4F5F7; font-family: "Archivo", "DejaVu Sans", Arial, sans-serif;
+    padding: 50px 64px 8px; display: flex; flex-direction: column; justify-content: space-between; }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; }
+  .head small { display: block; font-size: 28px; color: #AAB1BD; font-weight: 500; }
+  h1 { margin: 2px 0 0; font-size: 64px; line-height: 1; font-weight: 800; font-stretch: 66%; }
+  .date { font-size: 36px; font-weight: 700; font-stretch: 80%; text-align: right; padding-top: 6px; }
+  .pot { text-align: center; margin-top: -6px; }
+  .pot b { display: inline-block; font-size: 210px; font-weight: 800; font-stretch: 64%; line-height: 0.95; white-space: nowrap; font-variant-numeric: tabular-nums;
+    color: transparent; -webkit-background-clip: text; background-clip: text; background-size: 300% 100%; background-position: 0 0;
+    background-image: linear-gradient(100deg, #C9971A 0%, #F2C230 38%, #FFF6C9 50%, #F2C230 62%, #C9971A 100%); filter: drop-shadow(0 0 34px rgba(242, 194, 48, 0.42)); }
+  .pot b i { font-style: normal; font-size: 0.42em; letter-spacing: 0.04em; margin-left: 22px; }
+  .pot > span { display: block; margin-top: 6px; font-size: 30px; color: #E9D08A; font-weight: 600; letter-spacing: 0.02em; }
+  .balls { display: flex; align-items: center; justify-content: center; gap: 12px; }
+  .ball { flex: none; width: 78px; height: 78px; border-radius: 50%; display: grid; place-items: center; font-size: 40px; font-weight: 800; font-stretch: 66%; color: #fff;
+    background: radial-gradient(circle at 32% 28%, #FF7A70, #DC2F33 58%, #A51B1F); box-shadow: 0 0 28px rgba(220, 47, 51, 0.55), inset 0 -7px 0 rgba(0, 0, 0, 0.18); }
+  .ball.extra { color: #15181D; background: radial-gradient(circle at 32% 28%, #FFFFFF, #DCE1E8 62%, #AEB6C2); box-shadow: 0 0 26px rgba(255, 255, 255, 0.28), inset 0 -7px 0 rgba(0, 0, 0, 0.1); }
+  .ball.spin { color: rgba(255, 255, 255, 0.75); text-shadow: 0 7px 0 rgba(255, 255, 255, 0.28), 0 -7px 0 rgba(255, 255, 255, 0.28); filter: blur(0.6px); }
+  .ball.extra.spin { color: rgba(21, 24, 29, 0.7); text-shadow: 0 7px 0 rgba(21, 24, 29, 0.22), 0 -7px 0 rgba(21, 24, 29, 0.22); }
+  .plus { font-size: 44px; font-weight: 700; color: #7C8594; padding: 0 2px; }
+  .foot { display: flex; justify-content: space-between; align-items: baseline; gap: 40px; padding-bottom: 26px; }
+  .ask { font-size: 44px; font-weight: 800; font-stretch: 72%; }
+  .ask em { font-style: normal; color: #F2C230; margin-left: 12px; }
+  .price { font-size: 30px; color: #AAB1BD; }
+  .anim .head { animation: rise 0.5s both; }
+  .anim .pot { animation: swell 0.7s 0.45s both cubic-bezier(0.2, 1.2, 0.4, 1); }
+  .anim .pot b { animation: shine 1.7s ${TEASE_COUNT[1] - 200}ms both ease-in-out; }
+  .anim .pot > span { animation: rise 0.5s ${TEASE_COUNT[1]}ms both; }
+  .anim .ball { animation: drop 0.5s calc(1.3s + var(--i) * 0.11s) both cubic-bezier(0.2, 1.5, 0.4, 1), settle 0.45s calc(${TEASE_SETTLE(0)}ms + var(--i) * ${TEASE_SETTLE(1) - TEASE_SETTLE(0)}ms) both; }
+  .anim .plus { animation: rise 0.3s 2.1s both; }
+  .anim .ask { animation: rise 0.5s 5.2s both; }
+  .anim .ask em { animation: rise 0.45s 5.75s both; display: inline-block; }
+  .anim .price { animation: rise 0.5s 5.5s both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(18px); } }
+  @keyframes swell { from { opacity: 0; transform: scale(0.72); } }
+  @keyframes drop { from { opacity: 0; transform: translateY(-110px) scale(0.5); } 60% { opacity: 1; } }
+  @keyframes settle { 40% { scale: 1.2; } }
+  @keyframes shine { from { background-position: 100% 0; } to { background-position: 0 0; } }
+</style></head><body>
+  <div class="head"><div><small>${esc(L.cardTitle)}</small><h1>${esc(L.cardDraw(draw.id))}</h1></div><div class="date">${esc(when)}</div></div>
+  <div class="pot"><b><span id="amount">${esc(fmt(total, 2, L.locale))}</span><i>AVAX</i></b><span>${esc(streak >= 2 ? L.teaseStreak(streak) : L.teaseJackpot)}</span></div>
+  <div class="balls">${balls}</div>
+  <div class="foot"><div class="ask">${esc(L.teaseSold(sold))}<em>${esc(L.teaseAsk(sold))}</em></div><div class="price">${esc(L.teasePrice(fmt(price, 4, L.locale)))}</div></div>
+<script>
+  // Drawn frame by frame: seek(ms) puts every animation at that instant. The balls spin through
+  // numbers and settle on a question mark: the result is still open.
+  const amount = document.getElementById("amount"), last = amount.textContent, target = ${Number(ethers.formatEther(total))};
+  const balls = [...document.querySelectorAll(".ball")];
+  function seek(ms) {
+    for (const a of document.getAnimations()) { a.pause(); a.currentTime = ms; }
+    const k = Math.min(1, Math.max(0, (ms - ${TEASE_COUNT[0]}) / ${TEASE_COUNT[1] - TEASE_COUNT[0]})), eased = 1 - Math.pow(1 - k, 3);
+    amount.textContent = k >= 1 ? last : (target * eased).toLocaleString("${L.locale}", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    balls.forEach((b, i) => {
+      const done = ms >= ${TEASE_SETTLE(0)} + i * ${TEASE_SETTLE(1) - TEASE_SETTLE(0)};
+      b.classList.toggle("spin", !done);
+      b.textContent = done ? "?" : 1 + ((i * 7 + Math.floor(ms / 100) * (5 + i)) % (i < 7 ? 24 : 5));
+    });
+  }
+</script>
+</body></html>`;
+}
+
 const CHROMES = () => [process.env.CHROME, "google-chrome", "google-chrome-stable", "chromium", "chromium-browser"].filter(Boolean);
 const CHROME_FLAGS = ["--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=1", "--window-size=1200,675"];
 
 /** Plays the card in a headless Chrome and saves one PNG per frame (DevTools protocol). Returns the frames' paths. */
-async function captureFrames(bin, html, dir) {
+async function captureFrames(bin, html, dir, ms = FILM_MS) {
   const WebSocket = require("ws"); // comes with ethers
   const profile = path.join(dir, "profile-film");
   const chrome = spawn(bin, [...CHROME_FLAGS, "--remote-debugging-port=0", "--user-data-dir=" + profile, "file://" + html], { stdio: "ignore" });
@@ -260,7 +372,7 @@ async function captureFrames(bin, html, dir) {
     await call("Emulation.setDeviceMetricsOverride", { width: 1200, height: 675, deviceScaleFactor: 1, mobile: false });
     await run(`document.fonts.ready.then(() => { document.documentElement.classList.add("anim"); })`);
     const frames = [];
-    const count = Math.round((FILM_MS / 1000) * FPS);
+    const count = Math.round((ms / 1000) * FPS);
     for (let i = 0; i <= count; i++) {
       await run(`seek(${Math.round((i * 1000) / FPS)}); new Promise((r) => requestAnimationFrame(() => r()))`);
       const shot = await call("Page.captureScreenshot", { format: "png" });
@@ -280,15 +392,21 @@ async function captureFrames(bin, html, dir) {
  * the short film when it could be made (it needs ffmpeg too), or null when nothing could be drawn.
  */
 async function renderCard(data, opts = {}) {
+  return renderPage((font) => cardHtml(data, { ...opts, font }), { film: opts.film, ms: FILM_MS });
+}
+async function renderTeaser(data, opts = {}) {
+  return renderPage((font) => teaserHtml(data, { ...opts, font }), { film: opts.film, ms: TEASE_MS });
+}
+async function renderPage(build, opts = {}) {
   let font = "";
   try { font = "data:font/woff2;base64," + fs.readFileSync(path.join(__dirname, "..", "docs", "play", "fonts", "archivo.woff2")).toString("base64"); } catch {}
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "card-"));
   const html = path.join(dir, "card.html"), png = path.join(dir, "card.png"), mp4 = path.join(dir, "card.mp4");
-  fs.writeFileSync(html, cardHtml(data, { ...opts, font }));
+  fs.writeFileSync(html, build(font));
   if (opts.film !== false) {
     for (const bin of CHROMES()) {
       try {
-        const frames = await captureFrames(bin, html, dir);
+        const frames = await captureFrames(bin, html, dir, opts.ms);
         fs.copyFileSync(frames[frames.length - 1], png);
         try {
           // H.264 without sound: Telegram plays it in a loop, like a GIF. The last frame is held.
@@ -363,6 +481,28 @@ async function main() {
   if (!provider) throw new Error("no RPC endpoint answered");
   const lottery = new ethers.Contract(env.LOTTERY || LOTTERY, LOTTERY_ABI, provider);
 
+  if (cmd === "open" || cmd === "teaser") {
+    // Before a draw: a film of the pot, for the draw that is open and due soon.
+    const data = await collectTeaser(lottery);
+    const now = BigInt((await provider.getBlock("latest")).timestamp);
+    const left = data ? data.draw.scheduledTime - now : 0n;
+    const due = data && left > 120n && (env.FORCE === "1" || left < 2n * 3600n);
+    if (cmd === "open") { if (due) console.log(data.draw.id.toString()); return; }
+    if (!due) return console.log("No draw due within two hours: nothing to announce.");
+    if (env.ANNOUNCE_TEASER === "off") return console.log("Teaser switched off.");
+    const lang = env.ANNOUNCE_LANG === "en" ? "en" : "fr";
+    const tz = env.ANNOUNCE_TZ || "Europe/Paris";
+    const card = env.ANNOUNCE_CARD === "off" ? null : await renderTeaser(data, { lang, tz, film: env.ANNOUNCE_CARD !== "still" });
+    const text = teaserText(data, { lang, tz });
+    if (env.CARD_FILE && card) fs.copyFileSync(card.mp4 || card.png, env.CARD_FILE);
+    const playUrl = env.PLAY_URL === "none" ? "" : (env.PLAY_URL || OFFICIAL_SITE).trim();
+    if (env.DRY_RUN === "1") return console.log(text);
+    if (!env.ANNOUNCE_BOT_TOKEN || !env.ANNOUNCE_CHAT) return console.log("Not configured: add the ANNOUNCE_BOT_TOKEN and ANNOUNCE_CHAT secrets (README, Results bot).");
+    await send({ token: env.ANNOUNCE_BOT_TOKEN.trim(), chat: chatId(env.ANNOUNCE_CHAT), text, playUrl, photo: card && card.png, film: card && card.mp4, lang, api: env.TELEGRAM_API });
+    if (env.PUBLISHED_FILE) fs.writeFileSync(env.PUBLISHED_FILE, data.draw.id.toString() + "\n");
+    return console.log("published");
+  }
+
   const wanted = process.argv[3] ? BigInt(process.argv[3]) : null;
   const draw = wanted ? await lottery.getDraw(wanted) : await latestExecuted(lottery);
   if (cmd === "latest") {
@@ -400,4 +540,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { latestExecuted, collect, buildMessage, send, bestRank, chatId, cardHtml, renderCard };
+module.exports = { latestExecuted, collect, buildMessage, send, bestRank, chatId, cardHtml, renderCard, collectTeaser, teaserHtml, teaserText, renderTeaser };
