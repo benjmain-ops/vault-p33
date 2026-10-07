@@ -259,8 +259,8 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   await inApp.goto(url);
   await inApp.waitForSelector("#startConnect");
   await inApp.click("#startConnect"); await inApp.click("#walletList button");
-  await inApp.waitForSelector("#startMoonpay");
-  assert.equal(await inApp.getAttribute("#startMoonpay", "target"), null);
+  await inApp.waitForSelector("#startBuy");
+  assert.equal(await inApp.getAttribute("#startBuy", "target"), null);
   await inApp.close();
   const poor = await browser.newPage({ viewport: { width: 390, height: 844 } });
   poor.on("pageerror", (e) => errors.push(e.message));
@@ -269,14 +269,14 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   await poor.waitForFunction(() => /draw in/.test(document.getElementById("headline").textContent));
   assert.ok(await poor.isVisible("#startConnect"), "a wallet is there: step 1 offers to connect it");
   await poor.click("#startConnect"); await poor.click("#walletList button");
-  await poor.waitForSelector("#startMoonpay");
-  assert.equal(await poor.getAttribute("#startMoonpay", "href"), "https://www.moonpay.com/buy/avax");
-  assert.equal(await poor.getAttribute("#startMoonpay", "target"), "_blank", "a new tab where the browser has tabs");
+  await poor.waitForSelector("#startBuy");
+  assert.equal(await poor.getAttribute("#startBuy", "href"), "https://link.trustwallet.com/buy?asset=c10009000&fiat_currency=EUR&fiat_quantity=20");
+  assert.equal(await poor.getAttribute("#startBuy", "target"), "_blank", "a new tab where the browser has tabs");
   assert.match(await poor.textContent("#startSteps li.now"), /Some AVAX.*A ticket costs 0\.1821 WAVAX.*about 0\.2 AVAX is enough.*Copy my address.*Avalanche C-Chain/s);
   assert.equal(await poor.$$eval("#startSteps li.done", (x) => x.length), 1);
   await shot(poor, "play-6-needs-avax", false);
   await poor.close();
-  step("première visite : anglais par défaut, trois étapes, Trust Wallet et MoonPay");
+  step("première visite : anglais par défaut, trois étapes, Trust Wallet pour le wallet et pour l'achat");
 
   const bare = await browser.newPage({ viewport: { width: 390, height: 844 }, locale: "fr-FR" });
   await bare.addInitScript(FRENCH);
