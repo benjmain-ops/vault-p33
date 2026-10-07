@@ -436,11 +436,10 @@
       st1: "Un wallet", st1Text: "C'est ton compte : il garde tes AVAX et signe tes tickets. Trust Wallet est gratuit et s'installe en deux minutes.",
       st1Get: "Installer Trust Wallet", st1Open: "Je l'ai : ouvrir Sixte dedans", st1Connect: "Connecter mon wallet",
       st2: "Des AVAX", st2Text: (price, need) => `Un ticket coûte ${price} WAVAX, plus quelques centimes de frais de réseau : environ ${need} AVAX suffisent pour un ticket. Sixte convertit tes AVAX en WAVAX au moment de l'achat.`,
-      st2Copy: "Copier mon adresse", st2Buy: "Acheter 20 € d'AVAX dans Trust Wallet", st2Check: "C'est fait, vérifier",
+      st2Buy: "Acheter 20 € d'AVAX dans Trust Wallet", st2Check: "C'est fait, vérifier",
       st2Small: "Ouvre l'écran d'achat de Trust Wallet, avec AVAX sur Avalanche et 20 € déjà remplis : tu peux changer le montant. Le prestataire de paiement vérifie ton identité, prend ses frais et ne sert pas tous les pays. Reviens ensuite ici et touche « C'est fait ». Avec un autre wallet, envoie des AVAX (réseau Avalanche C-Chain) à ton adresse.",
       st3: "Ta grille", st3Text: "Coche 6 numéros et 2 compléments, ou touche Flash, puis Acheter.",
       startNote: "En moyenne, une loterie rend moins qu'elle ne prend. Ne joue que ce que tu peux perdre, si tu es majeur et si c'est légal là où tu vis.",
-      copied: "Adresse copiée.",
       dlgHint: "Réseau : Avalanche C-Chain.",
       eRejected: "Transaction refusée dans le wallet.", eClosed: "Ce tirage n'accepte plus d'achats.", eNumbers: "Une grille est invalide.", eFunds: "Pas assez d'AVAX pour les frais.",
       ePay: "Le paiement en WAVAX a échoué.", eNothing: "Rien à encaisser.", ePaused: "La loterie est en pause.", eOther: "Échec : ",
@@ -488,11 +487,10 @@
       st1: "A wallet", st1Text: "It is your account: it holds your AVAX and signs your tickets. Trust Wallet is free and takes two minutes to set up.",
       st1Get: "Get Trust Wallet", st1Open: "I have it: open Sixte inside", st1Connect: "Connect my wallet",
       st2: "Some AVAX", st2Text: (price, need) => `A ticket costs ${price} WAVAX, plus a few cents of network fees: about ${need} AVAX is enough for one ticket. Sixte converts your AVAX into WAVAX when you buy.`,
-      st2Copy: "Copy my address", st2Buy: "Buy €20 of AVAX in Trust Wallet", st2Check: "Done, check again",
+      st2Buy: "Buy €20 of AVAX in Trust Wallet", st2Check: "Done, check again",
       st2Small: "Opens Trust Wallet's Buy screen with AVAX on Avalanche and €20 filled in: you can change the amount. The payment provider checks your identity, takes its fees and does not serve every country. Then come back here and tap “Done”. With another wallet, send AVAX (Avalanche C-Chain network) to your address.",
       st3: "Your line", st3Text: "Tick 6 numbers and 2 extras, or tap Quick pick, then Buy.",
       startNote: "On average a lottery pays back less than it takes. Play only what you can afford to lose, if you are an adult and it is legal where you live.",
-      copied: "Address copied.",
       dlgHint: "Network: Avalanche C-Chain.",
       eRejected: "Transaction rejected in the wallet.", eClosed: "This draw no longer takes purchases.", eNumbers: "A line is invalid.", eFunds: "Not enough AVAX for fees.",
       ePay: "The WAVAX payment failed.", eNothing: "Nothing to collect.", ePaused: "The lottery is paused.", eOther: "Failed: ",
@@ -974,9 +972,7 @@
       return [el("p", L.st1Text), acts];
     }], [L.st2, () => {
       const acts = el("div", "", "acts");
-      acts.append(button(L.st2Copy, "startCopy", false, async () => {
-        try { await navigator.clipboard.writeText(S.account); toast(L.copied); } catch (_) { toast(S.account); }
-      }), link(L.st2Buy, "startBuy", TRUST_BUY, true), button(L.st2Check, "startCheck", false, () => loadAccount().catch(() => {})));
+      acts.append(link(L.st2Buy, "startBuy", TRUST_BUY, true), button(L.st2Check, "startCheck", false, () => loadAccount().catch(() => {})));
       return [el("p", L.st2Text(fmt(S.price), fmt(short + GAS_RESERVE, 2))), acts, el("small", L.st2Small)];
     }], [L.st3, () => [el("p", L.st3Text)]]].forEach(([title, body], i) => {
       const li = el("li", "", i + 1 < step ? "done" : i + 1 === step ? "now" : "");
