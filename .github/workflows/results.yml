@@ -68,7 +68,7 @@ jobs:
           ANNOUNCE_CHAT: ${{ secrets.ANNOUNCE_CHAT }}
           ANNOUNCE_LANG: ${{ vars.ANNOUNCE_LANG || secrets.ANNOUNCE_LANG }}
           ANNOUNCE_TZ: ${{ vars.ANNOUNCE_TZ || secrets.ANNOUNCE_TZ }}
-          PLAY_URL: ${{ vars.PLAY_URL }}
+          PLAY_URL: ${{ vars.PLAY_URL || secrets.PLAY_URL }}
           ANNOUNCE_CARD: ${{ vars.ANNOUNCE_CARD || secrets.ANNOUNCE_CARD }}
           FORCE: ${{ inputs.force && '1' || '' }}
           PUBLISHED_FILE: .published/draw
