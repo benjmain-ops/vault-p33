@@ -253,6 +253,15 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   assert.equal(await first.isHidden("#start"), true, "stays hidden once dismissed");
   await first.close();
   // a wallet that cannot pay a ticket: step 2, with its address to copy and the link to buy AVAX
+  // inside a wallet's phone browser a link cannot open a second window: it opens in place
+  const inApp = await browser.newPage({ viewport: { width: 390, height: 844 }, userAgent: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36 Trust/Android" });
+  await inApp.addInitScript(INIT, "0x00000000000000000000000000000000000000ab");
+  await inApp.goto(url);
+  await inApp.waitForSelector("#startConnect");
+  await inApp.click("#startConnect"); await inApp.click("#walletList button");
+  await inApp.waitForSelector("#startMoonpay");
+  assert.equal(await inApp.getAttribute("#startMoonpay", "target"), null);
+  await inApp.close();
   const poor = await browser.newPage({ viewport: { width: 390, height: 844 } });
   poor.on("pageerror", (e) => errors.push(e.message));
   await poor.addInitScript(INIT, "0x00000000000000000000000000000000000000aa");
@@ -262,6 +271,7 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   await poor.click("#startConnect"); await poor.click("#walletList button");
   await poor.waitForSelector("#startMoonpay");
   assert.equal(await poor.getAttribute("#startMoonpay", "href"), "https://www.moonpay.com/buy/avax");
+  assert.equal(await poor.getAttribute("#startMoonpay", "target"), "_blank", "a new tab where the browser has tabs");
   assert.match(await poor.textContent("#startSteps li.now"), /Some AVAX.*A ticket costs 0\.1821 WAVAX.*about 0\.2 AVAX is enough.*Copy my address.*Avalanche C-Chain/s);
   assert.equal(await poor.$$eval("#startSteps li.done", (x) => x.length), 1);
   await shot(poor, "play-6-needs-avax", false);

@@ -958,7 +958,14 @@
     list.textContent = "";
     const el = (tag, text, cls) => { const e = document.createElement(tag); if (text) e.textContent = text; if (cls) e.className = cls; return e; };
     const button = (text, id, primary, run) => { const b = el("button", text, "btn small" + (primary ? " primary" : "")); b.type = "button"; b.id = id; b.onclick = run; return b; };
-    const link = (text, id, href, primary) => { const a = el("a", text, "btn small" + (primary ? " primary" : "")); a.id = id; a.href = href; a.target = "_blank"; a.rel = "noopener"; return a; };
+    // A wallet's in-app browser has no second window: there a link that asks for one does nothing,
+    // so it opens in place (the back button returns to the page).
+    const inWallet = !!window.ethereum && /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+    const link = (text, id, href, primary) => {
+      const a = el("a", text, "btn small" + (primary ? " primary" : "")); a.id = id; a.href = href; a.rel = "noopener";
+      if (!inWallet) a.target = "_blank";
+      return a;
+    };
     [[L.st1, () => {
       const acts = el("div", "", "acts");
       if (window.ethereum || found.size) acts.append(button(L.st1Connect, "startConnect", true, openWalletDialog));
