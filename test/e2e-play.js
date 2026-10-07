@@ -272,7 +272,7 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   await poor.waitForSelector("#startBuy");
   assert.equal(await poor.getAttribute("#startBuy", "href"), "https://link.trustwallet.com/buy?asset=c10009000&fiat_currency=EUR&fiat_quantity=20");
   assert.equal(await poor.getAttribute("#startBuy", "target"), "_blank", "a new tab where the browser has tabs");
-  assert.match(await poor.textContent("#startSteps li.now"), /Some AVAX.*A ticket costs 0\.1821 WAVAX.*about 0\.2 AVAX is enough.*Copy my address.*Avalanche C-Chain/s);
+  assert.match(await poor.textContent("#startSteps li.now"), /Some AVAX.*A ticket costs 0\.1821 WAVAX.*about 0\.2 AVAX is enough.*Buy €20 of AVAX in Trust Wallet.*Avalanche C-Chain/s);
   assert.equal(await poor.$$eval("#startSteps li.done", (x) => x.length), 1);
   await shot(poor, "play-6-needs-avax", false);
   await poor.close();
