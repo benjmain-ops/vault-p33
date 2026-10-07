@@ -14,6 +14,10 @@ on:
         description: "Print what would be done, send nothing"
         type: boolean
         default: false
+      scheduled:
+        description: "Started by an outside scheduler: recap only when something happened"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -53,7 +57,7 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
           RECAP_FILE: ${{ runner.temp }}/recap.txt
           # a manual run always produces a recap, which also tests the notification
-          RECAP_ALWAYS: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+          RECAP_ALWAYS: ${{ github.event_name == 'workflow_dispatch' && !inputs.scheduled && '1' || '' }}
         run: |
           if [ -z "$PLAYER_PRIVATE_KEY" ] || [ -z "$VAULT" ]; then
             echo "Not configured: add the PLAYER_PRIVATE_KEY and VAULT secrets (README, Automatic play)."

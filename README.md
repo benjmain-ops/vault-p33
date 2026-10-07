@@ -141,6 +141,21 @@ Things to know:
 - Scheduled runs can start late when GitHub is busy. That is why they are planned two to three
   hours before each draw.
 
+### Running on time
+
+GitHub starts scheduled workflows when it has room: on this repository they have started six
+to eight hours late, which is after the draw. `scheduler/` holds a small Cloudflare Worker whose
+cron triggers fire on the minute and ask GitHub to run each workflow at once (free plan).
+
+1. Create a fine-grained GitHub token limited to this repository, with the single permission
+   "Actions: read and write".
+2. In Cloudflare, create a Worker from this repository (root directory `scheduler`), or paste
+   `worker.js` into a new Worker and add the three cron triggers listed in `wrangler.toml`.
+3. Add the token to the Worker as a secret named `GH_TOKEN`. In a fork, set `GH_REPO` to your
+   own repository.
+
+The schedules inside the workflows remain as a late fallback: nothing is published or bought twice.
+
 The bot can also run anywhere Node.js runs: `cp .env.example .env`, fill it in, `npm run player`.
 
 ## Results bot
