@@ -48,7 +48,7 @@ const TEXT = {
     teaseJackpot: "à gagner, reports compris", teaseStreak: (n) => `jackpot reporté depuis ${n} tirages`,
     teaseSold: (n) => (n === 0 ? "Aucun ticket pour l'instant." : `${n} ticket${n > 1 ? "s" : ""} en jeu.`),
     teaseAsk: (n) => (n === 0 ? "Le premier ?" : "Et le tien ?"), teasePrice: (p) => `Ticket à ${p} AVAX`,
-    teaseLine: (pool, price, sold) => `${pool} AVAX à gagner · ticket à ${price} · ${sold} ticket${sold > 1 ? "s" : ""} en jeu`,
+    teaseLine: (pool, price) => `${pool} AVAX à gagner · ticket à ${price}`,
     teaseHead: (n) => `Tirage n° ${n}`, teaseIn: (t) => `dans ${t}`,
   },
   en: {
@@ -68,7 +68,7 @@ const TEXT = {
     teaseJackpot: "to win, rollovers included", teaseStreak: (n) => `jackpot rolled over for ${n} draws`,
     teaseSold: (n) => (n === 0 ? "No ticket yet." : `${n} ticket${n === 1 ? "" : "s"} in play.`),
     teaseAsk: (n) => (n === 0 ? "The first one?" : "And yours?"), teasePrice: (p) => `Ticket at ${p} AVAX`,
-    teaseLine: (pool, price, sold) => `${pool} AVAX to win · ticket ${price} · ${sold} ticket${sold === 1 ? "" : "s"} in play`,
+    teaseLine: (pool, price) => `${pool} AVAX to win · ticket ${price}`,
     teaseHead: (n) => `Draw no. ${n}`, teaseIn: (t) => `in ${t}`,
   },
 };
@@ -258,7 +258,7 @@ function teaserText({ draw, price, sold, total }, { lang = "fr", tz = "Europe/Pa
   const L = TEXT[lang] || TEXT.fr;
   const d = new Date(Number(draw.scheduledTime) * 1000);
   const when = `${d.toLocaleDateString(L.locale, { weekday: "short", day: "numeric", month: "short", timeZone: tz })} ${L.at} ${d.toLocaleTimeString(L.locale, { hour: "2-digit", minute: "2-digit", timeZone: tz })}`;
-  return esc(`${L.teaseHead(draw.id)} · ${when}\n${L.teaseLine(fmt(total, 2, L.locale), price2(price, L.locale), sold)}`);
+  return esc(`${L.teaseHead(draw.id)} · ${when}\n${L.teaseLine(fmt(total, 2, L.locale), price2(price, L.locale))}`);
 }
 
 /**
@@ -271,9 +271,13 @@ function teaserCaption(data, { lang = "fr", tz = "Europe/Paris", now = Math.floo
   const L = TEXT[lang] || TEXT.fr;
   const at = Number(data.draw.scheduledTime), left = Math.max(60, at - now);
   const h = Math.floor(left / 3600), m = Math.round((left % 3600) / 60);
-  const head = L.teaseHead(data.draw.id) + " · ", count = L.teaseIn(h ? `${h} h ${String(m).padStart(2, "0")}` : `${m} min`);
-  const rest = L.teaseLine(fmt(data.total, 2, L.locale), price2(data.price, L.locale), data.sold);
-  return { text: head + count + "\n" + rest, entities: [{ type: "date_time", offset: head.length, length: count.length, unix_time: at, date_time_format: "r" }] };
+  // two short lines; the countdown comes first, in bold, so that it is what the eye lands on
+  const lead = "⏳ ", count = L.teaseIn(h ? `${h} h ${String(m).padStart(2, "0")}` : `${m} min`);
+  const first = lead + count + " · " + L.teaseHead(data.draw.id);
+  return {
+    text: first + "\n" + L.teaseLine(fmt(data.total, 2, L.locale), price2(data.price, L.locale)),
+    entities: [{ type: "bold", offset: 0, length: first.length }, { type: "date_time", offset: lead.length, length: count.length, unix_time: at, date_time_format: "r" }],
+  };
 }
 
 /** The film before a draw: the pot climbs, the balls spin and stay unknown. Same look as the result card. */

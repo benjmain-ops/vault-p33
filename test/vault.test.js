@@ -873,15 +873,16 @@ test("results bot: the latest draw is published once to the Telegram chat, with 
   assert.match(film, /<span id="amount">50,15<\/span><i>AVAX<\/i><\/b><span>jackpot reporté depuis 9 tirages/);
   assert.match(film, /1 ticket en jeu\.<em>Et le tien \?<\/em>/);
   assert.equal((film.match(/class="ball[^"]*" style="--i:\d">\?</g) || []).length, 9, "the numbers stay unknown");
-  assert.match(teaserText(tease, { lang: "fr", tz: "UTC" }), /^Tirage n° 2 · .* à 18:00\n50,15 AVAX à gagner · ticket à 0,19 · 1 ticket en jeu$/);
+  assert.match(teaserText(tease, { lang: "fr", tz: "UTC" }), /^Tirage n° 2 · .* à 18:00\n50,15 AVAX à gagner · ticket à 0,19$/);
   // its caption carries a countdown Telegram keeps up to date; a refusal of the entity sends the text without
   const { teaserCaption } = require("../keeper/announce");
   const at = Number(tease.draw.scheduledTime);
   const cap = teaserCaption(tease, { lang: "fr", tz: "UTC", now: at - 1500 });
-  assert.match(cap.text, /^Tirage n° 2 · dans 25 min\n50,15 AVAX à gagner · ticket à 0,19 · 1 ticket en jeu$/);
-  assert.deepEqual(cap.entities, [{ type: "date_time", offset: 14, length: 11, unix_time: at, date_time_format: "r" }]);
-  assert.equal(cap.text.substr(14, 11), "dans 25 min");
-  assert.match(teaserCaption(tease, { lang: "en", tz: "UTC", now: at - 6 * 3600 - 23 * 60 }).text, /^Draw no\. 2 · in 6 h 23\n/);
+  assert.match(cap.text, /^⏳ dans 25 min · Tirage n° 2\n50,15 AVAX à gagner · ticket à 0,19$/);
+  assert.deepEqual(cap.entities, [{ type: "bold", offset: 0, length: 27 }, { type: "date_time", offset: 2, length: 11, unix_time: at, date_time_format: "r" }]);
+  assert.equal(cap.text.substr(2, 11), "dans 25 min");
+  assert.equal(cap.text.split("\n").length, 2, "two lines");
+  assert.match(teaserCaption(tease, { lang: "en", tz: "UTC", now: at - 6 * 3600 - 23 * 60 }).text, /^⏳ in 6 h 23 · Draw no\. 2\n/);
   seen.length = 0;
   await send({ token: "123:abc", chat: "@results", text: cap.text, entities: cap.entities, api });
   assert.deepEqual(seen[0].body.entities, cap.entities);
