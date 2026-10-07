@@ -36,7 +36,7 @@ const og = `<!doctype html><html><head><style>
 </style></head><body>
   <div class="text">
     <h1>Sixte</h1>
-    <p>Loterie AVAX. 6 numéros sur 24, deux tirages par jour.</p>
+    <p>AVAX lottery. 6 numbers out of 24, two draws a day.</p>
     <div class="balls">${[3, 9, 14, 17, 21, 24, 7].map((n) => `<span class="ball">${n}</span>`).join("")}<span class="plus">+</span><span class="ball extra">2</span><span class="ball extra">5</span></div>
   </div>
   <div class="slip"><div class="grid">${boxes}</div></div>

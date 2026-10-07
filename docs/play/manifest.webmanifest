@@ -1,7 +1,8 @@
 {
   "name": "Sixte",
   "short_name": "Sixte",
-  "description": "Loterie AVAX : 6 numéros sur 24, deux tirages par jour.",
+  "description": "AVAX lottery: 6 numbers out of 24, two draws a day.",
+  "lang": "en",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

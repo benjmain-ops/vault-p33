@@ -86,11 +86,14 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
       },
     };
   };
+  // the page is in English unless French was chosen: most of this walk is written against the French texts
+  const FRENCH = () => { try { localStorage.setItem("sixte.lang", "fr"); } catch (_) {} };
   const errors = [];
   const open = async (opts) => {
     const page = await browser.newPage(opts);
     page.on("pageerror", (e) => errors.push(e.message));
     await page.addInitScript(INIT, user.address.toLowerCase());
+    await page.addInitScript(FRENCH);
     return page;
   };
   const page = await open({ viewport: { width: 390, height: 844 }, locale: "fr-FR", deviceScaleFactor: 2, ...(VIDEO ? { recordVideo: { dir: VIDEO, size: { width: 390, height: 844 } } } : {}) });
@@ -226,7 +229,47 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   step("anglais, et mise en page large");
 
   // 7. no wallet in the browser: the dialog offers to reopen the page in Trust Wallet
+  // a first visit, in a French-speaking browser: English all the same, and the three steps
+  const first = await browser.newPage({ viewport: { width: 390, height: 844 }, locale: "fr-FR" });
+  first.on("pageerror", (e) => errors.push(e.message));
+  await first.goto(url);
+  await first.waitForFunction(() => /^(Morning|Evening) draw in/.test(document.getElementById("headline").textContent));
+  assert.equal(await first.getAttribute("html", "lang"), "en");
+  assert.match(await first.textContent("#start"), /New here\? Three steps.*A wallet.*Trust Wallet is free.*Some AVAX.*Your line.*only what you can afford to lose/s);
+  assert.equal(await first.getAttribute("#startTrust", "href"), "https://trustwallet.com/download");
+  assert.equal(await first.$$eval("#startSteps li.now", (x) => x.length), 1);
+  await shot(first, "play-5-first-visit", false);
+  let sent = null;
+  await first.route("https://link.trustwallet.com/**", (route) => { sent = route.request().url(); route.abort(); });
+  await first.click("#startOpenTrust").catch(() => {});
+  await first.waitForTimeout(400);
+  assert.match(sent, /^https:\/\/link\.trustwallet\.com\/open_url\?coin_id=10009000&url=/);
+  await first.goto(url);
+  await first.waitForSelector("#startHide");
+  await first.click("#startHide");
+  assert.equal(await first.isHidden("#start"), true);
+  await first.reload();
+  await first.waitForFunction(() => /draw in/.test(document.getElementById("headline").textContent));
+  assert.equal(await first.isHidden("#start"), true, "stays hidden once dismissed");
+  await first.close();
+  // a wallet that cannot pay a ticket: step 2, with its address to copy and the link to buy AVAX
+  const poor = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  poor.on("pageerror", (e) => errors.push(e.message));
+  await poor.addInitScript(INIT, "0x00000000000000000000000000000000000000aa");
+  await poor.goto(url);
+  await poor.waitForFunction(() => /draw in/.test(document.getElementById("headline").textContent));
+  assert.ok(await poor.isVisible("#startConnect"), "a wallet is there: step 1 offers to connect it");
+  await poor.click("#startConnect"); await poor.click("#walletList button");
+  await poor.waitForSelector("#startMoonpay");
+  assert.equal(await poor.getAttribute("#startMoonpay", "href"), "https://www.moonpay.com/buy/avax");
+  assert.match(await poor.textContent("#startSteps li.now"), /Some AVAX.*A ticket costs 0\.1821 WAVAX.*about 0\.2 AVAX is enough.*Copy my address.*Avalanche C-Chain/s);
+  assert.equal(await poor.$$eval("#startSteps li.done", (x) => x.length), 1);
+  await shot(poor, "play-6-needs-avax", false);
+  await poor.close();
+  step("première visite : anglais par défaut, trois étapes, Trust Wallet et MoonPay");
+
   const bare = await browser.newPage({ viewport: { width: 390, height: 844 }, locale: "fr-FR" });
+  await bare.addInitScript(FRENCH);
   await bare.goto(url);
   assert.equal(await bare.isHidden("#install"), true, "no install banner until the browser offers it");
   await bare.evaluate(() => { const e = new Event("beforeinstallprompt"); e.prompt = () => (window.prompted = true); e.userChoice = Promise.resolve({ outcome: "accepted" }); window.dispatchEvent(e); });
