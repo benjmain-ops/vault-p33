@@ -824,10 +824,10 @@ test("results bot: the latest draw is published once to the Telegram chat, with 
   const fr = buildMessage(data, { lang: "fr", tz: "UTC" });
   assert.match(fr, /^<b>Loterie AVAX, tirage n° 1<\/b>\n/);
   assert.match(fr, /Numéros sortis\n<b>1 {2}2 {2}3 {2}4 {2}5 {2}6 {2}7<\/b> {2}\+ {2}<b>1 {2}3<\/b>/);
-  assert.match(fr, /2 tickets joués, 0,3 WAVAX en jeu\.\nGagnants : 1 ticket au rang 11 \(0,019 WAVAX à partager\)\./);
-  assert.match(fr, /Prochain tirage .* à 18:00 : 0,15 WAVAX à gagner, ticket à 0,19 WAVAX\.$/);
+  assert.match(fr, /2 tickets joués, 0,3 AVAX en jeu\.\nGagnants : 1 ticket au rang 11 \(0,019 AVAX à partager\)\./);
+  assert.match(fr, /Prochain tirage .* à 18:00 : 0,15 AVAX à gagner, ticket à 0,19 AVAX\.$/);
   assert.match(buildMessage({ ...data, reserve: E("100") }, { lang: "fr", tz: "UTC", short: true }),
-    /^Gagnants : 1 ticket au rang 11 \(0,019 WAVAX à partager\)\.\n\nProchain tirage .* à 18:00 : 100,15 WAVAX à gagner, ticket à 0,19 WAVAX\.$/, "under the picture: the winners and the next draw");
+    /^Gagnants : 1 ticket au rang 11 \(0,019 AVAX à partager\)\.\n\nProchain tirage .* à 18:00 : 100,15 AVAX à gagner, ticket à 0,19 AVAX\.$/, "under the picture: the winners and the next draw");
   const en = buildMessage({ ...data, byRank: new Map(), next: null }, { lang: "en", tz: "UTC" });
   assert.match(en, /No winning ticket: the prizes roll over/);
   assert.match(en, /The next draw is not open yet\.$/);
@@ -873,12 +873,12 @@ test("results bot: the latest draw is published once to the Telegram chat, with 
   assert.match(film, /<span id="amount">50,15<\/span><i>AVAX<\/i><\/b><span>jackpot reporté depuis 9 tirages/);
   assert.match(film, /1 ticket en jeu\.<em>Et le tien \?<\/em>/);
   assert.equal((film.match(/class="ball[^"]*" style="--i:\d">\?</g) || []).length, 9, "the numbers stay unknown");
-  assert.match(teaserText(tease, { lang: "fr", tz: "UTC" }), /^Tirage n° 2, .* à 18:00 : 50,15 WAVAX à gagner, reports compris\. Ticket à 0,19 WAVAX, 1 ticket en jeu pour l'instant\.$/);
+  assert.match(teaserText(tease, { lang: "fr", tz: "UTC" }), /^Tirage n° 2 · .* à 18:00\n50,15 AVAX à gagner · ticket à 0,19 · 1 ticket en jeu$/);
   // its caption carries a countdown Telegram keeps up to date; a refusal of the entity sends the text without
   const { teaserCaption } = require("../keeper/announce");
   const at = Number(tease.draw.scheduledTime);
   const cap = teaserCaption(tease, { lang: "fr", tz: "UTC", now: at - 1500 });
-  assert.match(cap.text, /^Tirage n° 2 · dans 25 min\nTirage n° 2, /);
+  assert.match(cap.text, /^Tirage n° 2 · dans 25 min\n50,15 AVAX à gagner · ticket à 0,19 · 1 ticket en jeu$/);
   assert.deepEqual(cap.entities, [{ type: "date_time", offset: 14, length: 11, unix_time: at, date_time_format: "r" }]);
   assert.equal(cap.text.substr(14, 11), "dans 25 min");
   assert.match(teaserCaption(tease, { lang: "en", tz: "UTC", now: at - 6 * 3600 - 23 * 60 }).text, /^Draw no\. 2 · in 6 h 23\n/);

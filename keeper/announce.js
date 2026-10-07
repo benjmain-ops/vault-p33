@@ -35,40 +35,40 @@ const TEXT = {
     locale: "fr-FR",
     title: (n) => `Loterie AVAX, tirage n° ${n}`,
     drawn: "Numéros sortis",
-    played: (n, pool) => `${n} ticket${n > 1 ? "s" : ""} joué${n > 1 ? "s" : ""}, ${pool} WAVAX en jeu.`,
+    played: (n, pool) => `${n} ticket${n > 1 ? "s" : ""} joué${n > 1 ? "s" : ""}, ${pool} AVAX en jeu.`,
     winners: "Gagnants : ", sep: " ; ",
-    rank: (r, n, pool) => `${n} ticket${n > 1 ? "s" : ""} au rang ${r}${pool ? ` (${pool} WAVAX à partager)` : ""}`,
+    rank: (r, n, pool) => `${n} ticket${n > 1 ? "s" : ""} au rang ${r}${pool ? ` (${pool} AVAX à partager)` : ""}`,
     none: "Aucun ticket gagnant : les lots sont reportés sur les prochains tirages.",
-    next: (when, pool, price) => `Prochain tirage ${when} : ${pool} WAVAX à gagner, ticket à ${price} WAVAX.`,
+    next: (when, pool, price) => `Prochain tirage ${when} : ${pool} AVAX à gagner, ticket à ${price} AVAX.`,
     notOpen: "Le prochain tirage n'est pas encore ouvert.",
     play: (site) => `Jouer sur ${site}`,
-    cardTitle: "Loterie AVAX de BCM DAO", cardDraw: (n) => `Tirage n° ${n}`, cardSold: "tickets joués", cardPool: "WAVAX en jeu", cardWinners: "tickets gagnants",
+    cardTitle: "Loterie AVAX de BCM DAO", cardDraw: (n) => `Tirage n° ${n}`, cardSold: "tickets joués", cardPool: "AVAX en jeu", cardWinners: "tickets gagnants",
     cardNext: (when) => `Prochain tirage ${when}`, cardJackpot: "à gagner, reports compris",
     at: "à",
     teaseJackpot: "à gagner, reports compris", teaseStreak: (n) => `jackpot reporté depuis ${n} tirages`,
     teaseSold: (n) => (n === 0 ? "Aucun ticket pour l'instant." : `${n} ticket${n > 1 ? "s" : ""} en jeu.`),
-    teaseAsk: (n) => (n === 0 ? "Le premier ?" : "Et le tien ?"), teasePrice: (p) => `Ticket à ${p} WAVAX`,
-    teaseText: (n, when, pool, price, sold) => `Tirage n° ${n}, ${when} : ${pool} WAVAX à gagner, reports compris. Ticket à ${price} WAVAX, ${sold} ticket${sold > 1 ? "s" : ""} en jeu pour l'instant.`,
+    teaseAsk: (n) => (n === 0 ? "Le premier ?" : "Et le tien ?"), teasePrice: (p) => `Ticket à ${p} AVAX`,
+    teaseLine: (pool, price, sold) => `${pool} AVAX à gagner · ticket à ${price} · ${sold} ticket${sold > 1 ? "s" : ""} en jeu`,
     teaseHead: (n) => `Tirage n° ${n}`, teaseIn: (t) => `dans ${t}`,
   },
   en: {
     locale: "en-GB",
     title: (n) => `AVAX lottery, draw no. ${n}`,
     drawn: "Numbers drawn",
-    played: (n, pool) => `${n} ticket${n === 1 ? "" : "s"} played, ${pool} WAVAX in play.`,
+    played: (n, pool) => `${n} ticket${n === 1 ? "" : "s"} played, ${pool} AVAX in play.`,
     winners: "Winners: ", sep: "; ",
-    rank: (r, n, pool) => `${n} ticket${n === 1 ? "" : "s"} at rank ${r}${pool ? ` (${pool} WAVAX to share)` : ""}`,
+    rank: (r, n, pool) => `${n} ticket${n === 1 ? "" : "s"} at rank ${r}${pool ? ` (${pool} AVAX to share)` : ""}`,
     none: "No winning ticket: the prizes roll over to the next draws.",
-    next: (when, pool, price) => `Next draw ${when}: ${pool} WAVAX to win, ticket at ${price} WAVAX.`,
+    next: (when, pool, price) => `Next draw ${when}: ${pool} AVAX to win, ticket at ${price} AVAX.`,
     notOpen: "The next draw is not open yet.",
     play: (site) => `Play on ${site}`,
-    cardTitle: "BCM DAO's AVAX lottery", cardDraw: (n) => `Draw no. ${n}`, cardSold: "tickets played", cardPool: "WAVAX in play", cardWinners: "winning tickets",
+    cardTitle: "BCM DAO's AVAX lottery", cardDraw: (n) => `Draw no. ${n}`, cardSold: "tickets played", cardPool: "AVAX in play", cardWinners: "winning tickets",
     cardNext: (when) => `Next draw ${when}`, cardJackpot: "to win, rollovers included",
     at: "at",
     teaseJackpot: "to win, rollovers included", teaseStreak: (n) => `jackpot rolled over for ${n} draws`,
     teaseSold: (n) => (n === 0 ? "No ticket yet." : `${n} ticket${n === 1 ? "" : "s"} in play.`),
-    teaseAsk: (n) => (n === 0 ? "The first one?" : "And yours?"), teasePrice: (p) => `Ticket at ${p} WAVAX`,
-    teaseText: (n, when, pool, price, sold) => `Draw no. ${n}, ${when}: ${pool} WAVAX to win, rollovers included. Ticket at ${price} WAVAX, ${sold} ticket${sold === 1 ? "" : "s"} in play so far.`,
+    teaseAsk: (n) => (n === 0 ? "The first one?" : "And yours?"), teasePrice: (p) => `Ticket at ${p} AVAX`,
+    teaseLine: (pool, price, sold) => `${pool} AVAX to win · ticket ${price} · ${sold} ticket${sold === 1 ? "" : "s"} in play`,
     teaseHead: (n) => `Draw no. ${n}`, teaseIn: (t) => `in ${t}`,
   },
 };
@@ -78,6 +78,8 @@ const fmt = (x, digits, locale) => {
   const frac = f.slice(0, digits).replace(/0+$/, "");
   return Number(i).toLocaleString(locale) + (frac ? (locale.startsWith("fr") ? "," : ".") + frac : "");
 };
+// a price to two decimals, rounded (the other amounts are cut, never rounded up)
+const price2 = (x, locale) => Number(ethers.formatEther(x)).toFixed(2).replace(".", locale.startsWith("fr") ? "," : ".");
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 /** The latest draw that has been executed, looking back a few draws from the current one. */
@@ -133,7 +135,7 @@ function buildMessage({ draw, sold, byRank, next, price, reserve = 0n }, { lang 
     return `${day} ${L.at} ${hour}`;
   };
   // the next draw pays its own pool plus what earlier draws left unwon
-  const nextLine = next ? L.next(when(next.scheduledTime), fmt(next.prizePool + reserve, 2, L.locale), fmt(price, 4, L.locale)) : L.notOpen;
+  const nextLine = next ? L.next(when(next.scheduledTime), fmt(next.prizePool + reserve, 2, L.locale), price2(price, L.locale)) : L.notOpen;
   // Under the picture, what the picture does not spell out: who won what, and the next draw.
   if (short) return esc(winnersLine()) + "\n\n" + esc(nextLine);
   const lines = [
@@ -178,8 +180,9 @@ function cardHtml({ draw, sold, byRank, next, reserve = 0n }, { lang = "fr", tz 
      and the page colour continues below it. */
   html { min-height: 675px; background: radial-gradient(900px 520px at 78% -10%, rgba(220, 47, 51, 0.38), transparent 70%), radial-gradient(700px 420px at 0% 100%, rgba(220, 47, 51, 0.2), transparent 70%), #0B0D12; }
   body { margin: 0; width: 100vw; height: 100vh; overflow: hidden; color: #F4F5F7; font-family: "Archivo", "DejaVu Sans", Arial, sans-serif;
-    padding: 62px 64px 8px; display: flex; flex-direction: column; justify-content: space-between; }
-  .head { display: flex; justify-content: space-between; align-items: flex-start; }
+    padding: 46px 64px 8px; display: flex; flex-direction: column; justify-content: space-between; }
+  /* Telegram lays a "GIF" badge over the top left corner and a menu over the top right one */
+  .head { display: flex; justify-content: space-between; align-items: flex-start; padding: 0 56px 0 130px; }
   .head small { display: block; font-size: 30px; color: #AAB1BD; font-weight: 500; }
   h1 { margin: 2px 0 0; font-size: 104px; line-height: 1; font-weight: 800; font-stretch: 66%; }
   .date { font-size: 30px; color: #AAB1BD; text-align: right; padding-top: 8px; }
@@ -255,7 +258,7 @@ function teaserText({ draw, price, sold, total }, { lang = "fr", tz = "Europe/Pa
   const L = TEXT[lang] || TEXT.fr;
   const d = new Date(Number(draw.scheduledTime) * 1000);
   const when = `${d.toLocaleDateString(L.locale, { weekday: "short", day: "numeric", month: "short", timeZone: tz })} ${L.at} ${d.toLocaleTimeString(L.locale, { hour: "2-digit", minute: "2-digit", timeZone: tz })}`;
-  return esc(L.teaseText(draw.id, when, fmt(total, 2, L.locale), fmt(price, 4, L.locale), sold));
+  return esc(`${L.teaseHead(draw.id)} · ${when}\n${L.teaseLine(fmt(total, 2, L.locale), price2(price, L.locale), sold)}`);
 }
 
 /**
@@ -269,7 +272,7 @@ function teaserCaption(data, { lang = "fr", tz = "Europe/Paris", now = Math.floo
   const at = Number(data.draw.scheduledTime), left = Math.max(60, at - now);
   const h = Math.floor(left / 3600), m = Math.round((left % 3600) / 60);
   const head = L.teaseHead(data.draw.id) + " · ", count = L.teaseIn(h ? `${h} h ${String(m).padStart(2, "0")}` : `${m} min`);
-  const rest = teaserText(data, { lang, tz }).replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  const rest = L.teaseLine(fmt(data.total, 2, L.locale), price2(data.price, L.locale), data.sold);
   return { text: head + count + "\n" + rest, entities: [{ type: "date_time", offset: head.length, length: count.length, unix_time: at, date_time_format: "r" }] };
 }
 
@@ -285,8 +288,9 @@ function teaserHtml({ draw, price, sold, total, streak = 0 }, { lang = "fr", tz 
   * { box-sizing: border-box; }
   html { min-height: 675px; background: radial-gradient(1000px 560px at 50% 42%, rgba(242, 194, 48, 0.13), transparent 70%), radial-gradient(900px 520px at 78% -10%, rgba(220, 47, 51, 0.38), transparent 70%), radial-gradient(700px 420px at 0% 100%, rgba(220, 47, 51, 0.2), transparent 70%), #0B0D12; }
   body { margin: 0; width: 100vw; height: 100vh; overflow: hidden; color: #F4F5F7; font-family: "Archivo", "DejaVu Sans", Arial, sans-serif;
-    padding: 50px 64px 8px; display: flex; flex-direction: column; justify-content: space-between; }
-  .head { display: flex; justify-content: space-between; align-items: flex-start; }
+    padding: 40px 64px 8px; display: flex; flex-direction: column; justify-content: space-between; }
+  /* Telegram lays a "GIF" badge over the top left corner and a menu over the top right one */
+  .head { display: flex; justify-content: space-between; align-items: flex-start; padding: 0 56px 0 130px; }
   .head small { display: block; font-size: 28px; color: #AAB1BD; font-weight: 500; }
   h1 { margin: 2px 0 0; font-size: 64px; line-height: 1; font-weight: 800; font-stretch: 66%; }
   .date { font-size: 36px; font-weight: 700; font-stretch: 80%; text-align: right; padding-top: 6px; }
@@ -325,7 +329,7 @@ function teaserHtml({ draw, price, sold, total, streak = 0 }, { lang = "fr", tz 
   <div class="head"><div><small>${esc(L.cardTitle)}</small><h1>${esc(L.cardDraw(draw.id))}</h1></div><div class="date">${esc(when)}</div></div>
   <div class="pot"><b><span id="amount">${esc(fmt(total, 2, L.locale))}</span><i>AVAX</i></b><span>${esc(streak >= 2 ? L.teaseStreak(streak) : L.teaseJackpot)}</span></div>
   <div class="balls">${balls}</div>
-  <div class="foot"><div class="ask">${esc(L.teaseSold(sold))}<em>${esc(L.teaseAsk(sold))}</em></div><div class="price">${esc(L.teasePrice(fmt(price, 4, L.locale)))}</div></div>
+  <div class="foot"><div class="ask">${esc(L.teaseSold(sold))}<em>${esc(L.teaseAsk(sold))}</em></div><div class="price">${esc(L.teasePrice(price2(price, L.locale)))}</div></div>
 <script>
   // Drawn frame by frame: seek(ms) puts every animation at that instant. The balls spin through
   // numbers and settle on a question mark: the result is still open.
