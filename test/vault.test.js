@@ -839,6 +839,8 @@ test("results bot: the latest draw is published once to the Telegram chat, with 
     req.on("data", (c) => (body += c));
     req.on("end", () => {
       seen.push({ url: req.url, body: JSON.parse(body) });
+      const parsed = JSON.parse(body);
+      if (req.url.includes("once400") && parsed.entities) return res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ ok: false, description: "Bad Request: unsupported entity" }));
       const ok = !req.url.includes("bad");
       res.writeHead(ok ? 200 : 403, { "content-type": "application/json" }).end(JSON.stringify(ok ? { ok: true, result: { chat: { title: "secret name" } } } : { ok: false, description: "Forbidden: bot is not a member of the channel chat" }));
     });
@@ -872,5 +874,21 @@ test("results bot: the latest draw is published once to the Telegram chat, with 
   assert.match(film, /1 ticket en jeu\.<em>Et le tien \?<\/em>/);
   assert.equal((film.match(/class="ball[^"]*" style="--i:\d">\?</g) || []).length, 9, "the numbers stay unknown");
   assert.match(teaserText(tease, { lang: "fr", tz: "UTC" }), /^Tirage n° 2, .* à 18:00 : 50,15 WAVAX à gagner, reports compris\. Ticket à 0,19 WAVAX, 1 ticket en jeu pour l'instant\.$/);
+  // its caption carries a countdown Telegram keeps up to date; a refusal of the entity sends the text without
+  const { teaserCaption } = require("../keeper/announce");
+  const at = Number(tease.draw.scheduledTime);
+  const cap = teaserCaption(tease, { lang: "fr", tz: "UTC", now: at - 1500 });
+  assert.match(cap.text, /^Tirage n° 2 · dans 25 min\nTirage n° 2, /);
+  assert.deepEqual(cap.entities, [{ type: "date_time", offset: 14, length: 11, unix_time: at, date_time_format: "r" }]);
+  assert.equal(cap.text.substr(14, 11), "dans 25 min");
+  assert.match(teaserCaption(tease, { lang: "en", tz: "UTC", now: at - 6 * 3600 - 23 * 60 }).text, /^Draw no\. 2 · in 6 h 23\n/);
+  seen.length = 0;
+  await send({ token: "123:abc", chat: "@results", text: cap.text, entities: cap.entities, api });
+  assert.deepEqual(seen[0].body.entities, cap.entities);
+  assert.equal(seen[0].body.parse_mode, undefined, "plain text with entities, no HTML");
+  seen.length = 0;
+  await send({ token: "123:abc", chat: "@results", text: cap.text, entities: cap.entities, api: api + "/once400" });
+  assert.equal(seen.length, 2, "refused with the entity, sent again without");
+  assert.equal(seen[1].body.entities, undefined);
   server.close();
 });

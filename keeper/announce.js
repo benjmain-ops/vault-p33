@@ -49,6 +49,7 @@ const TEXT = {
     teaseSold: (n) => (n === 0 ? "Aucun ticket pour l'instant." : `${n} ticket${n > 1 ? "s" : ""} en jeu.`),
     teaseAsk: (n) => (n === 0 ? "Le premier ?" : "Et le tien ?"), teasePrice: (p) => `Ticket à ${p} WAVAX`,
     teaseText: (n, when, pool, price, sold) => `Tirage n° ${n}, ${when} : ${pool} WAVAX à gagner, reports compris. Ticket à ${price} WAVAX, ${sold} ticket${sold > 1 ? "s" : ""} en jeu pour l'instant.`,
+    teaseHead: (n) => `Tirage n° ${n}`, teaseIn: (t) => `dans ${t}`,
   },
   en: {
     locale: "en-GB",
@@ -68,6 +69,7 @@ const TEXT = {
     teaseSold: (n) => (n === 0 ? "No ticket yet." : `${n} ticket${n === 1 ? "" : "s"} in play.`),
     teaseAsk: (n) => (n === 0 ? "The first one?" : "And yours?"), teasePrice: (p) => `Ticket at ${p} WAVAX`,
     teaseText: (n, when, pool, price, sold) => `Draw no. ${n}, ${when}: ${pool} WAVAX to win, rollovers included. Ticket at ${price} WAVAX, ${sold} ticket${sold === 1 ? "" : "s"} in play so far.`,
+    teaseHead: (n) => `Draw no. ${n}`, teaseIn: (t) => `in ${t}`,
   },
 };
 
@@ -256,6 +258,21 @@ function teaserText({ draw, price, sold, total }, { lang = "fr", tz = "Europe/Pa
   return esc(L.teaseText(draw.id, when, fmt(total, 2, L.locale), fmt(price, 4, L.locale), sold));
 }
 
+/**
+ * The teaser's caption with a countdown that Telegram keeps up to date: a "date_time" entity in
+ * relative format, which each reader's app renders ("in 25 minutes") from the draw's time. The
+ * text inside it is what an app that does not know the entity shows: the time left when posted.
+ * Plain text and entities, not HTML.
+ */
+function teaserCaption(data, { lang = "fr", tz = "Europe/Paris", now = Math.floor(Date.now() / 1000) } = {}) {
+  const L = TEXT[lang] || TEXT.fr;
+  const at = Number(data.draw.scheduledTime), left = Math.max(60, at - now);
+  const h = Math.floor(left / 3600), m = Math.round((left % 3600) / 60);
+  const head = L.teaseHead(data.draw.id) + " · ", count = L.teaseIn(h ? `${h} h ${String(m).padStart(2, "0")}` : `${m} min`);
+  const rest = teaserText(data, { lang, tz }).replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  return { text: head + count + "\n" + rest, entities: [{ type: "date_time", offset: head.length, length: count.length, unix_time: at, date_time_format: "r" }] };
+}
+
 /** The film before a draw: the pot climbs, the balls spin and stay unknown. Same look as the result card. */
 function teaserHtml({ draw, price, sold, total, streak = 0 }, { lang = "fr", tz = "Europe/Paris", font = "" } = {}) {
   const L = TEXT[lang] || TEXT.fr;
@@ -442,14 +459,24 @@ function chatId(value) {
   throw new Error("ANNOUNCE_CHAT is not a channel name: expected @name, a t.me/name link or a numeric id");
 }
 
-async function send({ token, chat, text, playUrl, photo = null, film = null, lang = "fr", api = "https://api.telegram.org" }) {
+async function send({ token, chat, text, entities = null, playUrl, photo = null, film = null, lang = "fr", api = "https://api.telegram.org" }) {
+  // With entities, the text is plain (no HTML) and Telegram is told where they are. If it refuses
+  // the message (an entity it does not accept), the same text goes out without them.
+  if (entities && entities.length) {
+    try { return await send({ token, chat, text, entities: [], playUrl, photo, film, lang, api, plain: entities }); } catch (e) {
+      if (!/\(400/.test(e.message)) throw e;
+      return send({ token, chat, text, entities: [], playUrl, photo, film, lang, api, plain: [] });
+    }
+  }
+  const plain = arguments[0].plain || null; // internal: entities to attach to a plain text
   const L = TEXT[lang] || TEXT.fr;
   const markup = playUrl ? { inline_keyboard: [[{ text: L.play(new URL(playUrl).hostname.replace(/^www\./, "")), url: playUrl }]] } : null;
   let res;
   if (photo || film) {
     // the picture (or its short film) carries the result; the text goes with it as its caption
     const form = new FormData();
-    form.append("chat_id", chat); form.append("caption", text); form.append("parse_mode", "HTML");
+    form.append("chat_id", chat); form.append("caption", text);
+    if (plain) { if (plain.length) form.append("caption_entities", JSON.stringify(plain)); } else form.append("parse_mode", "HTML");
     if (markup) form.append("reply_markup", JSON.stringify(markup));
     if (film) {
       form.append("width", "1280"); form.append("height", "720");
@@ -457,7 +484,8 @@ async function send({ token, chat, text, playUrl, photo = null, film = null, lan
     } else form.append("photo", new Blob([fs.readFileSync(photo)], { type: "image/png" }), "tirage.png");
     res = await fetch(`${api}/bot${token}/${film ? "sendAnimation" : "sendPhoto"}`, { method: "POST", body: form });
   } else {
-    const body = { chat_id: chat, text, parse_mode: "HTML", link_preview_options: { is_disabled: true } };
+    const body = { chat_id: chat, text, link_preview_options: { is_disabled: true } };
+    if (plain) { if (plain.length) body.entities = plain; } else body.parse_mode = "HTML";
     if (markup) body.reply_markup = markup;
     res = await fetch(`${api}/bot${token}/sendMessage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   }
@@ -493,12 +521,12 @@ async function main() {
     const lang = env.ANNOUNCE_LANG === "en" ? "en" : "fr";
     const tz = env.ANNOUNCE_TZ || "Europe/Paris";
     const card = env.ANNOUNCE_CARD === "off" ? null : await renderTeaser(data, { lang, tz, film: env.ANNOUNCE_CARD !== "still" });
-    const text = teaserText(data, { lang, tz });
+    const { text, entities } = teaserCaption(data, { lang, tz, now: Number(now) });
     if (env.CARD_FILE && card) fs.copyFileSync(card.mp4 || card.png, env.CARD_FILE);
     const playUrl = env.PLAY_URL === "none" ? "" : (env.PLAY_URL || OFFICIAL_SITE).trim();
     if (env.DRY_RUN === "1") return console.log(text);
     if (!env.ANNOUNCE_BOT_TOKEN || !env.ANNOUNCE_CHAT) return console.log("Not configured: add the ANNOUNCE_BOT_TOKEN and ANNOUNCE_CHAT secrets (README, Results bot).");
-    await send({ token: env.ANNOUNCE_BOT_TOKEN.trim(), chat: chatId(env.ANNOUNCE_CHAT), text, playUrl, photo: card && card.png, film: card && card.mp4, lang, api: env.TELEGRAM_API });
+    await send({ token: env.ANNOUNCE_BOT_TOKEN.trim(), chat: chatId(env.ANNOUNCE_CHAT), text, entities, playUrl, photo: card && card.png, film: card && card.mp4, lang, api: env.TELEGRAM_API });
     if (env.PUBLISHED_FILE) fs.writeFileSync(env.PUBLISHED_FILE, data.draw.id.toString() + "\n");
     return console.log("published");
   }
@@ -540,4 +568,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { latestExecuted, collect, buildMessage, send, bestRank, chatId, cardHtml, renderCard, collectTeaser, teaserHtml, teaserText, renderTeaser };
+module.exports = { latestExecuted, collect, buildMessage, send, bestRank, chatId, cardHtml, renderCard, collectTeaser, teaserHtml, teaserText, teaserCaption, renderTeaser };
