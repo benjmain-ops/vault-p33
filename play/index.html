@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Sixte</title>
-<meta name="description" content="Sixte : une interface indépendante pour jouer à la loterie AVAX. 6 numéros sur 24, deux tirages par jour.">
+<meta name="description" content="Sixte: an independent interface to play the AVAX lottery. 6 numbers out of 24, two draws a day.">
 <meta name="theme-color" content="#EDF0F3">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="manifest" href="manifest.webmanifest">
@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-title" content="Sixte">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Sixte">
-<meta property="og:description" content="Loterie AVAX : 6 numéros sur 24, deux tirages par jour. Coche ta grille et joue depuis ton wallet.">
+<meta property="og:description" content="AVAX lottery: 6 numbers out of 24, two draws a day. Tick your line and play from your wallet.">
 <meta property="og:url" content="https://benjmain-ops.github.io/vault-p33/play/">
 <meta property="og:image" content="https://benjmain-ops.github.io/vault-p33/play/og.png">
 <meta property="og:image:width" content="1200">
@@ -68,6 +68,8 @@
     padding: 10px 14px; font-weight: 650; line-height: 1.2; min-height: 44px;
   }
   .btn.primary { background: var(--pen); border-color: var(--pen); color: #fff; }
+  a.btn { display: inline-flex; align-items: center; text-decoration: none; color: var(--ink); }
+  a.btn.primary { color: #fff; }
   .btn.primary:disabled { background: #9AA6C7; border-color: #9AA6C7; }
   .btn.quiet { border-color: transparent; padding-inline: 10px; color: var(--muted); }
   .btn.small { min-height: 38px; padding: 7px 12px; font-size: 0.9375rem; }
@@ -76,6 +78,23 @@
   .install { display: flex; justify-content: space-between; align-items: center; gap: 10px 14px; flex-wrap: wrap; background: var(--paper); border-radius: 8px; padding: 12px 14px; box-shadow: 0 0 0 1px var(--rule); }
   .install p { margin: 0; flex: 1 1 220px; }
   .install div { display: flex; gap: 6px; }
+
+  /* first visit: the three steps from nothing to a ticket */
+  .start { background: var(--paper); border-radius: 8px; padding: 14px 14px 12px; margin-top: 10px; box-shadow: 0 0 0 1px var(--rule); }
+  .start-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .start-head strong { font-weight: 800; font-stretch: var(--narrow); font-size: 1.25rem; }
+  .firsts { list-style: none; margin: 10px 0 0; padding: 0; counter-reset: step; }
+  .firsts li { counter-increment: step; position: relative; padding: 9px 0 9px 42px; border-top: 1px solid var(--rule); color: var(--muted, inherit); }
+  .firsts li::before { content: counter(step); position: absolute; left: 0; top: 7px; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+    border: 1.5px solid var(--rule); font-weight: 800; font-stretch: var(--narrow); line-height: 1; }
+  .firsts li b { font-weight: 750; }
+  .firsts li.done::before { content: "✓"; background: var(--pen); border-color: var(--pen); color: #fff; }
+  .firsts li.now { color: inherit; }
+  .firsts li.now::before { border-color: var(--red); color: var(--red); }
+  .firsts li p { margin: 4px 0 0; }
+  .firsts li .acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+  .firsts li small { display: block; margin-top: 8px; font-size: 0.875rem; opacity: 0.8; }
+  .start-note { margin: 8px 0 0; padding-top: 9px; border-top: 1px solid var(--rule); font-size: 0.875rem; opacity: 0.8; }
 
   /* lead: the countdown is the headline */
   .lead { padding: 20px 0 22px; }
@@ -282,6 +301,12 @@
     <div><button class="btn small primary" id="installBtn" type="button"></button><button class="btn small quiet" id="installLater" type="button"></button></div>
   </div>
 
+  <section class="start" id="start" hidden aria-labelledby="startTitle">
+    <div class="start-head"><strong id="startTitle"></strong><button class="btn small quiet" id="startHide" type="button"></button></div>
+    <ol class="firsts" id="startSteps"></ol>
+    <p class="start-note" id="startNote"></p>
+  </section>
+
   <main>
     <section class="lead">
       <h1 id="headline" class="num">&nbsp;</h1>
@@ -407,6 +432,15 @@
       dlgNoWallet: "Aucun wallet ici. Ouvre Sixte dans l'app de ton wallet : tes grilles te suivent. Sur ordinateur, installe l'extension d'un wallet.",
       installText: "Installe Sixte sur ton écran d'accueil : elle s'ouvre comme une app.", installBtn: "Installer", installLater: "Plus tard",
       installIos: "Pour installer Sixte : touche Partager, puis « Sur l'écran d'accueil ».", installOk: "Compris",
+      startTitle: "Première fois ? Trois étapes", startHide: "Je connais",
+      st1: "Un wallet", st1Text: "C'est ton compte : il garde tes AVAX et signe tes tickets. Trust Wallet est gratuit et s'installe en deux minutes.",
+      st1Get: "Installer Trust Wallet", st1Open: "Je l'ai : ouvrir Sixte dedans", st1Connect: "Connecter mon wallet",
+      st2: "Des AVAX", st2Text: (price, need) => `Un ticket coûte ${price} WAVAX, plus quelques centimes de frais de réseau : environ ${need} AVAX suffisent pour un ticket. Sixte convertit tes AVAX en WAVAX au moment de l'achat.`,
+      st2Copy: "Copier mon adresse", st2Buy: "Acheter des AVAX sur MoonPay", st2Check: "C'est fait, vérifier",
+      st2Small: "Sur MoonPay, choisis AVAX sur le réseau Avalanche C-Chain et colle ton adresse. MoonPay vérifie ton identité, fixe son propre minimum d'achat et ses frais, et ne sert pas tous les pays. Trust Wallet a aussi un bouton « Acheter ».",
+      st3: "Ta grille", st3Text: "Coche 6 numéros et 2 compléments, ou touche Flash, puis Acheter.",
+      startNote: "En moyenne, une loterie rend moins qu'elle ne prend. Ne joue que ce que tu peux perdre, si tu es majeur et si c'est légal là où tu vis.",
+      copied: "Adresse copiée.",
       dlgHint: "Réseau : Avalanche C-Chain.",
       eRejected: "Transaction refusée dans le wallet.", eClosed: "Ce tirage n'accepte plus d'achats.", eNumbers: "Une grille est invalide.", eFunds: "Pas assez d'AVAX pour les frais.",
       ePay: "Le paiement en WAVAX a échoué.", eNothing: "Rien à encaisser.", ePaused: "La loterie est en pause.", eOther: "Échec : ",
@@ -450,13 +484,22 @@
       dlgNoWallet: "No wallet here. Open Sixte inside your wallet's app: your lines come along. On a computer, install a wallet extension.",
       installText: "Install Sixte on your home screen: it opens like an app.", installBtn: "Install", installLater: "Later",
       installIos: "To install Sixte: tap Share, then “Add to Home Screen”.", installOk: "Got it",
+      startTitle: "New here? Three steps", startHide: "I know how",
+      st1: "A wallet", st1Text: "It is your account: it holds your AVAX and signs your tickets. Trust Wallet is free and takes two minutes to set up.",
+      st1Get: "Get Trust Wallet", st1Open: "I have it: open Sixte inside", st1Connect: "Connect my wallet",
+      st2: "Some AVAX", st2Text: (price, need) => `A ticket costs ${price} WAVAX, plus a few cents of network fees: about ${need} AVAX is enough for one ticket. Sixte converts your AVAX into WAVAX when you buy.`,
+      st2Copy: "Copy my address", st2Buy: "Buy AVAX on MoonPay", st2Check: "Done, check again",
+      st2Small: "On MoonPay, choose AVAX on the Avalanche C-Chain network and paste your address. MoonPay checks your identity, sets its own minimum purchase and fees, and does not serve every country. Trust Wallet has a Buy button too.",
+      st3: "Your line", st3Text: "Tick 6 numbers and 2 extras, or tap Quick pick, then Buy.",
+      startNote: "On average a lottery pays back less than it takes. Play only what you can afford to lose, if you are an adult and it is legal where you live.",
+      copied: "Address copied.",
       dlgHint: "Network: Avalanche C-Chain.",
       eRejected: "Transaction rejected in the wallet.", eClosed: "This draw no longer takes purchases.", eNumbers: "A line is invalid.", eFunds: "Not enough AVAX for fees.",
       ePay: "The WAVAX payment failed.", eNothing: "Nothing to collect.", ePaused: "The lottery is paused.", eOther: "Failed: ",
       drawnLabel: "Numbers drawn", lastDraw: "Last draw", footVault: "Let the yield of your p33 play for you",
     },
   };
-  let lang = store.get("lang") || ((navigator.language || "fr").toLowerCase().startsWith("fr") ? "fr" : "en");
+  let lang = store.get("lang") === "fr" ? "fr" : "en"; // English unless French was chosen with the button
   let L = TEXT[lang];
 
   // ── chain ──
@@ -897,7 +940,46 @@
     $("tabMine").setAttribute("aria-selected", String(S.tab === "mine")); $("tabResults").setAttribute("aria-selected", String(S.tab === "results"));
     $("mine").hidden = S.tab !== "mine"; $("results").hidden = S.tab !== "results";
   }
-  function renderAll() { renderChrome(); renderInstall(); renderLead(); renderLast(); renderSlip(); renderFacts(); renderMine(); renderResults(); }
+  // ── first visit: wallet, AVAX, line ──
+  const TRUST_GET = "https://trustwallet.com/download", MOONPAY_BUY = "https://www.moonpay.com/buy/avax";
+  const openInTrust = () => { location.href = "https://link.trustwallet.com/open_url?coin_id=10009000&url=" + encodeURIComponent(appUrl()); };
+  function renderStart() {
+    const box = $("start");
+    // enough for one ticket: WAVAX for it and a little AVAX for fees, or AVAX to convert
+    const short = S.price > S.wavax ? S.price - S.wavax : 0n;
+    const funded = S.balances && (short === 0n ? S.avax >= GAS_RESERVE / 4n : S.avax >= short + GAS_RESERVE);
+    const played = S.tickets.length > 0;
+    const step = !S.account ? 1 : !S.balances ? 0 : !funded ? 2 : 3;
+    // gone once someone has played, or said they know; it comes back for a wallet that cannot pay a ticket
+    if (step === 0 || (step === 3 && played) || (store.get("start") === "hide" && step !== 2)) { box.hidden = true; return; }
+    box.hidden = false;
+    $("startTitle").textContent = L.startTitle; $("startHide").textContent = L.startHide; $("startNote").textContent = L.startNote;
+    const list = $("startSteps");
+    list.textContent = "";
+    const el = (tag, text, cls) => { const e = document.createElement(tag); if (text) e.textContent = text; if (cls) e.className = cls; return e; };
+    const button = (text, id, primary, run) => { const b = el("button", text, "btn small" + (primary ? " primary" : "")); b.type = "button"; b.id = id; b.onclick = run; return b; };
+    const link = (text, id, href, primary) => { const a = el("a", text, "btn small" + (primary ? " primary" : "")); a.id = id; a.href = href; a.target = "_blank"; a.rel = "noopener"; return a; };
+    [[L.st1, () => {
+      const acts = el("div", "", "acts");
+      if (window.ethereum || found.size) acts.append(button(L.st1Connect, "startConnect", true, openWalletDialog));
+      else acts.append(link(L.st1Get, "startTrust", TRUST_GET, true), button(L.st1Open, "startOpenTrust", false, openInTrust));
+      return [el("p", L.st1Text), acts];
+    }], [L.st2, () => {
+      const acts = el("div", "", "acts");
+      acts.append(button(L.st2Copy, "startCopy", false, async () => {
+        try { await navigator.clipboard.writeText(S.account); toast(L.copied); } catch (_) { toast(S.account); }
+      }), link(L.st2Buy, "startMoonpay", MOONPAY_BUY, true), button(L.st2Check, "startCheck", false, () => loadAccount().catch(() => {})));
+      return [el("p", L.st2Text(fmt(S.price), fmt(short + GAS_RESERVE, 2))), acts, el("small", L.st2Small)];
+    }], [L.st3, () => [el("p", L.st3Text)]]].forEach(([title, body], i) => {
+      const li = el("li", "", i + 1 < step ? "done" : i + 1 === step ? "now" : "");
+      li.append(el("b", title));
+      if (i + 1 === step) li.append(...body());
+      list.appendChild(li);
+    });
+  }
+  $("startHide").onclick = () => { store.set("start", "hide"); renderStart(); };
+
+  function renderAll() { renderChrome(); renderInstall(); renderStart(); renderLead(); renderLast(); renderSlip(); renderFacts(); renderMine(); renderResults(); }
 
   // ── loading ──
   const soft = (p, fallback) => p.catch(() => fallback);
@@ -944,7 +1026,7 @@
     S.tickets = (await Promise.all(recent.map((id) => lottery.getTicket(id)))).reverse();
     const need = [...new Set(S.tickets.map((t) => t.drawId))].filter((id) => !S.draws.has(id) || !executed(S.draws.get(id)));
     (await Promise.all(need.map((id) => lottery.getDraw(id)))).forEach((d) => S.draws.set(d.id, d));
-    renderStub(); renderFacts(); renderMine();
+    renderStub(); renderFacts(); renderMine(); renderStart();
     try {
       const now = BigInt((await read.getBlock("latest")).timestamp);
       const minDrawId = S.drawId > 60n ? S.drawId - 60n : 0n;
@@ -976,7 +1058,7 @@
     if (!found.size && !window.ethereum) {
       const b = document.createElement("button");
       b.type = "button"; b.className = "btn primary"; b.id = "openInTrust"; b.textContent = L.openTrust;
-      b.onclick = () => { location.href = "https://link.trustwallet.com/open_url?coin_id=10009000&url=" + encodeURIComponent(appUrl()); };
+      b.onclick = openInTrust;
       box.appendChild(b);
       const m = document.createElement("button");
       m.type = "button"; m.className = "btn"; m.id = "openInMetaMask"; m.textContent = L.openMetaMask;
