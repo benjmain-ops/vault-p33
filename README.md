@@ -89,6 +89,8 @@ Optional settings, as repository *variables* (or secrets, both are read):
 - `TICKETS_PER_DRAW`: fixed number of tickets per draw. By default the bot spreads what the wallet
   holds over the draws left before the next weekly sale, with at least one ticket per draw while
   funds last.
+- `PLAY_DRAWS`: `both`, `morning` (the 06:00 UTC draw) or `evening` (the 18:00 UTC one). The
+  workflow of this repository plays the evening draw only; the bot itself defaults to both.
 - `KEEP_TICKETS` (default 30): working balance of the player wallet, in tickets. Prize money above
   it goes to the vault. Whatever its origin, the wallet never keeps more than three times that, so
   raise it if one week of yield buys more than 90 tickets.

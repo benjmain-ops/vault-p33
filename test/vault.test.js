@@ -4,7 +4,7 @@ const { ethers } = require("ethers");
 const { setup, expectRevert, sel, E } = require("./helpers");
 const lib = require("../keeper/lib");
 const { runVault, makeContext } = require("../keeper/index");
-const { runPlayer, ticketsToBuy, clean, recap } = require("../keeper/player");
+const { runPlayer, ticketsToBuy, playsDraw, clean, recap } = require("../keeper/player");
 
 const quiet = { log: () => {} };
 
@@ -618,6 +618,14 @@ test("player bot: spreads the tickets over the draws left before the next sale",
   // fixed number of tickets per draw
   assert.equal(ticketsToBuy({ affordable: 10n, mine: 0n, scheduledTime: fri6, fixed: 3n }), 3n);
   assert.equal(ticketsToBuy({ affordable: 10n, mine: 1n, scheduledTime: fri6, fixed: 3n }), 2n);
+  // one draw a day: the budget is spread over half as many draws, and only that draw is played
+  assert.equal(ticketsToBuy({ affordable: 28n, mine: 0n, scheduledTime: fri6 + 43200n, perDay: 1 }), 4n, "evening draws left before the sale: 7");
+  assert.equal(ticketsToBuy({ affordable: 3n, mine: 0n, scheduledTime: thu + 604800n + 86400n + 18n * 3600n, perDay: 1 }), 3n, "last evening draw: everything");
+  assert.equal(playsDraw(fri6, "evening"), false);
+  assert.equal(playsDraw(fri6 + 43200n, "evening"), true);
+  assert.equal(playsDraw(fri6, "morning"), true);
+  assert.equal(playsDraw(fri6, "both"), true);
+  assert.equal(playsDraw(fri6, ""), true);
   assert.equal(ticketsToBuy({ affordable: 1n, mine: 0n, scheduledTime: fri6, fixed: 3n }), 1n);
 });
 

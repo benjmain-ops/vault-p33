@@ -53,6 +53,8 @@ jobs:
           # optional settings: accepted as repository variables or as secrets
           TICKETS_PER_DRAW: ${{ vars.TICKETS_PER_DRAW || secrets.TICKETS_PER_DRAW }}
           KEEP_TICKETS: ${{ vars.KEEP_TICKETS || secrets.KEEP_TICKETS }}
+          # which draws are played: both, morning (06:00 UTC) or evening (18:00 UTC). Here: one a day.
+          PLAY_DRAWS: ${{ vars.PLAY_DRAWS || secrets.PLAY_DRAWS || 'evening' }}
           SHOW_AMOUNTS: ${{ vars.SHOW_AMOUNTS || secrets.SHOW_AMOUNTS }}
           DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
           RECAP_FILE: ${{ runner.temp }}/recap.txt

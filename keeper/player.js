@@ -106,7 +106,7 @@ function defaults(cfg = {}) {
  * finished rising for the epoch), while there are two draws a day. What the wallet holds is divided by the number of
  * draws left before the next sale, with at least one ticket per draw while funds last.
  */
-function ticketsToBuy({ affordable, mine, scheduledTime, fixed = 0n }) {
+function ticketsToBuy({ affordable, mine, scheduledTime, fixed = 0n, perDay = 2 }) {
   affordable = BigInt(affordable);
   mine = BigInt(mine);
   let target;
@@ -117,7 +117,8 @@ function ticketsToBuy({ affordable, mine, scheduledTime, fixed = 0n }) {
     const saleOffset = 2n * 86400n; // Saturday 00:00 UTC, counted from Thursday 00:00 UTC (see lib.inHarvestWindow)
     let nextSale = t - (t % WEEK) + saleOffset;
     if (nextSale <= t) nextSale += WEEK;
-    const drawsLeft = (nextSale - t - 1n) / HALF_DAY + 1n;
+    // draws still to play before that sale: both daily draws, or only one of them (PLAY_DRAWS)
+    const drawsLeft = (nextSale - t - 1n) / (perDay === 1 ? 2n * HALF_DAY : HALF_DAY) + 1n;
     // `mine` tickets were already paid from the same budget: count them back in, so that a
     // second run before the same draw reaches the same target instead of buying again.
     target = (affordable + mine) / drawsLeft;
@@ -127,6 +128,16 @@ function ticketsToBuy({ affordable, mine, scheduledTime, fixed = 0n }) {
   if (n > affordable) n = affordable;
   if (n > MAX_PER_TX) n = MAX_PER_TX;
   return n > 0n ? n : 0n;
+}
+
+/**
+ * Whether a draw is one the bot plays: "both" (default), or only the "morning" or the "evening"
+ * one, told apart by the draw's own time (before or after noon UTC), not by when the bot runs.
+ */
+function playsDraw(scheduledTime, mode = "both") {
+  if (mode !== "morning" && mode !== "evening") return true;
+  const evening = (BigInt(scheduledTime) % 86400n) >= 43200n;
+  return (mode === "evening") === evening;
 }
 
 const split = (c) => [c.map((p) => p.id), c.map((p) => p.rank), c.map((p) => p.amount), c.map((p) => p.proof)];
@@ -325,13 +336,14 @@ async function runPlayer({ signer, vaultAddress, cfg: userCfg }) {
     const draw = drawId > 0n ? await lottery.getDraw(drawId) : null;
     const open = !paused && draw && draw.drawnAt === 0n && now + cfg.buyCutoff < draw.scheduledTime;
     if (!open) log(`tickets: no draw open for purchases right now`);
+    else if (!playsDraw(draw.scheduledTime, cfg.playDraws)) log(`tickets: this draw is not played (only the ${cfg.playDraws} one is)`);
     else if (price === 0n || price > maxPrice) problem(`ticket price (${fmt(price)} WAVAX) above the cap set on the vault, nothing bought`);
     else {
       const ids = Array.from(await lottery.getOwnerTickets(me)).slice(-200);
       const tickets = await Promise.all(ids.map((id) => lottery.getTicket(id)));
       const mine = BigInt(tickets.filter((t) => t.drawId === drawId).length);
       const balance = await wavax.balanceOf(me);
-      const n = ticketsToBuy({ affordable: balance / price, mine, scheduledTime: draw.scheduledTime, fixed: cfg.ticketsPerDraw });
+      const n = ticketsToBuy({ affordable: balance / price, mine, scheduledTime: draw.scheduledTime, fixed: cfg.ticketsPerDraw, perDay: cfg.playDraws === "morning" || cfg.playDraws === "evening" ? 1 : 2 });
       report.held = mine;
       if (n === 0n) log(mine > 0n ? `tickets: ${mine} already held for this draw` : `tickets: not enough WAVAX for a ticket (${fmt(balance)} WAVAX, price ${fmt(price)})`);
       else if (cfg.dryRun) log(`  (dry run) would buy ${n} ticket(s) at ${fmt(price)} WAVAX`);
@@ -431,6 +443,7 @@ async function main() {
     cfg: {
       dryRun: env.DRY_RUN === "1",
       ticketsPerDraw: BigInt(env.TICKETS_PER_DRAW || "0"),
+      playDraws: (env.PLAY_DRAWS || "both").trim().toLowerCase(),
       ...(env.KEEP_TICKETS ? { keepTickets: BigInt(env.KEEP_TICKETS) } : {}),
       // public logs (scheduled workflow): amounts are left out unless asked for
       showAmounts: !env.GITHUB_ACTIONS || env.SHOW_AMOUNTS === "1",
@@ -452,4 +465,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { runPlayer, ticketsToBuy, clean, recap };
+module.exports = { runPlayer, ticketsToBuy, playsDraw, clean, recap };
