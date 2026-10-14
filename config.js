@@ -20,6 +20,7 @@ window.VAULT_CONFIG = {
   ipfsGateway: "https://ipfs.io/ipfs/",
   bingoNftCid: "bafybeihupyplt2ydu6fgucbhgpkeertanu3su2f37xovx2ixkfbyqsa479",
   bingoSecondsPerNumber: 1,
+  bingoDrawAfterSeconds: 3065, // the draw comes about 51 minutes after a round opens (observed, not a rule of the contract)
   // Optionnel : identifiant de projet Reown (WalletConnect), nécessaire sur iPhone.
   // Gratuit sur https://cloud.reown.com — laisser vide pour masquer le bouton.
   walletConnectProjectId: "",

@@ -181,6 +181,8 @@
   const IPFS = CFG.ipfsGateway || "https://ipfs.io/ipfs/";
   const NFT_CID = CFG.bingoNftCid || "bafybeihupyplt2ydu6fgucbhgpkeertanu3su2f37xovx2ixkfbyqsa479";
   const SECOND_PER_NUMBER = Number(CFG.bingoSecondsPerNumber || 1);
+  // Observed on the first 140 rounds: the draw comes about 51 minutes after the round opens (48 at times).
+  const DRAW_AFTER = Number(CFG.bingoDrawAfterSeconds || 3065);
   const PHASES = ["pending", "buying", "pendingDraw", "drawing", "finalized"];
   const MILESTONES = [["line", 7], ["column", 6], ["corners", 5], ["double", 10], ["bingo", 42]];
 
@@ -189,6 +191,7 @@
       otherLang: "Français", connect: "Connect",
       brandSub: "BCM DAO's bingo on Avalanche",
       round: (n) => `Round no. ${n}`,
+      drawIn: (t) => `Draw in about ${t}`, drawSoon: "Draw any moment now",
       phase: { pending: "Getting ready", buying: "Grids on sale", pendingDraw: "Sale closed, draw coming", drawing: "Drawing", drawn: "Draw over", finalized: "Draw over" },
       sub: {
         pending: "The round's numbers are being set. Nothing to do yet.",
@@ -218,6 +221,7 @@
       otherLang: "English", connect: "Connecter",
       brandSub: "Le bingo de BCM DAO sur Avalanche",
       round: (n) => `Manche n° ${n}`,
+      drawIn: (t) => `Tirage dans environ ${t}`, drawSoon: "Tirage d'une minute à l'autre",
       phase: { pending: "Préparation", buying: "Grilles en vente", pendingDraw: "Vente close, tirage imminent", drawing: "Tirage en cours", drawn: "Tirage terminé", finalized: "Tirage terminé" },
       sub: {
         pending: "Les numéros de la manche se mettent en place. Rien à faire pour l'instant.",
@@ -269,6 +273,7 @@
 
   const S = {
     account: null, roundId: 0n, info: null, phase: "none", pool: [], order: [], drawCount: 100,
+    openedAt: 0, // unix seconds when the round was created (RoundCreated): the draw follows about DRAW_AFTER later
     startAt: 0, // unix seconds when the order was published: number i (1-based) comes out at startAt + (i-1) * SECOND_PER_NUMBER
     shown: 0, // numbers shown so far
     replay: null, // { from: timestamp } when the user replays a finished draw; null = live
@@ -319,7 +324,12 @@
     // once the last number is out, the draw is over even if the operator has not finalized the round yet
     const ended = S.startAt && Date.now() / 1000 >= S.startAt + S.drawCount * SECOND_PER_NUMBER;
     const ph = S.phase === "drawing" && ended ? "drawn" : S.phase;
-    $("headline").textContent = L.round(S.roundId) + " · " + L.phase[ph];
+    let head = L.phase[ph];
+    if ((ph === "buying" || ph === "pendingDraw" || ph === "pending") && S.openedAt) {
+      const left = S.openedAt + DRAW_AFTER - Date.now() / 1000;
+      head = left > 45 ? L.drawIn(left >= 3600 ? `${Math.floor(left / 3600)} h ${String(Math.floor((left % 3600) / 60)).padStart(2, "0")}` : `${Math.ceil(left / 60)} min`) : L.drawSoon;
+    }
+    $("headline").textContent = L.round(S.roundId) + " · " + head;
     const sub = L.sub[ph];
     $("leadSub").textContent = ph === "buying" ? sub(fmt(S.price, 3), Number(S.info.totalGrids)) : ph === "drawing" ? sub(S.shown, S.drawCount) : sub;
   }
@@ -395,6 +405,7 @@
     else renderStage();
     const running = S.replay ? !S.paused && shown < S.drawCount : S.startAt && shown < S.drawCount;
     if (running) S.timer = setTimeout(tick, 250);
+    else if (S.openedAt && !S.startAt) { renderLead(); S.timer = setTimeout(tick, 1000); }
   }
 
   // ── reading the chain ──
@@ -409,23 +420,23 @@
     const phase = PHASES[Number(info.phase)] || "pending";
     const phaseChanged = phase !== S.phase || changed;
     S.phase = phase;
-    if (changed) { S.pool = []; S.order = []; S.startAt = 0; S.replay = null; S.gridIds = []; S.cells.clear(); S.owners.clear(); S.mine = []; S.shown = 0; }
+    if (changed) { S.pool = []; S.order = []; S.startAt = 0; S.openedAt = 0; S.replay = null; S.gridIds = []; S.cells.clear(); S.owners.clear(); S.mine = []; S.shown = 0; }
+    if (!S.openedAt && phase !== "drawing" && phase !== "finalized") S.openedAt = await eventTime(bingo.filters.RoundCreated(id));
     if ((phase === "drawing" || phase === "finalized") && !S.order.length) {
       const [pool, order] = await Promise.all([bingo.getRoundPool(id), bingo.getRoundDrawOrder(id)]);
       S.pool = Array.from(pool, Number); S.order = Array.from(order, Number);
       // the order lists positions: 0-based or 1-based, the contract does not say; 0 present means 0-based
       S.orderBase = S.order.includes(0) ? 0 : 1;
       S.drawCount = S.order.length;
-      S.startAt = await drawStart(id);
+      S.startAt = (await eventTime(bingo.filters.DrawOrderRevealed(id))) || 1; // unknown start: the whole draw at once, replay stays available
     }
     if (phaseChanged || !S.gridIds.length) await loadGrids();
     renderAll(); tick();
   }
-  /** When the order was published: the time of the block of the DrawOrderRevealed event (the draw reads one number a second from there). */
-  async function drawStart(id) {
+  /** The time of the block of an event of this round (when the order was published, when the round opened), 0 if not found. */
+  async function eventTime(filter) {
     try {
       const latest = await read.getBlockNumber();
-      const filter = bingo.filters.DrawOrderRevealed(id);
       // Avalanche: about one block every 2 s; look back a day in slices the public RPC accepts
       for (let to = latest, i = 0; i < 24 && to > 0; i++) {
         const from = Math.max(0, to - 2000);
@@ -433,9 +444,8 @@
         if (logs.length) return Number((await read.getBlock(logs[logs.length - 1].blockNumber)).timestamp);
         to = from - 1;
       }
-    } catch (e) { console.warn("draw start", e); }
-    // unknown start: show the whole draw at once, replay stays available
-    return 1;
+    } catch (e) { console.warn("event", e); }
+    return 0;
   }
   async function loadGrids() {
     const ids = Array.from(await soft(bingo.getRoundGridIds(S.roundId), [])).slice(0, 600);
