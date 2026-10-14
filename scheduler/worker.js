@@ -62,8 +62,8 @@ async function bingoEvents(until, env) {
 }
 
 const BINGO_TEXT = {
-  fr: { opened: (n, url) => `🟢 Bingo : la manche n° ${n} est ouverte, les grilles sont en vente.`, drawing: (n, url) => `🔴 Bingo : le tirage de la manche n° ${n} commence maintenant.` },
-  en: { opened: (n, url) => `🟢 Bingo: round no. ${n} is open, grids are on sale.`, drawing: (n, url) => `🔴 Bingo: the draw of round no. ${n} starts now.` },
+  fr: { opened: (n, url) => `🟢 Bingo : la manche n° ${n} est ouverte, les grilles sont en vente. Tirage dans 50 minutes environ.`, drawing: (n, url) => `🔴 Bingo : le tirage de la manche n° ${n} commence maintenant.` },
+  en: { opened: (n, url) => `🟢 Bingo: round no. ${n} is open, grids are on sale. Draw in about 50 minutes.`, drawing: (n, url) => `🔴 Bingo: the draw of round no. ${n} starts now.` },
 };
 
 async function tellBingo(events, env) {

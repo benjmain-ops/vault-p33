@@ -74,7 +74,7 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
 
   // 1. on sale: the round, the price, the leaderboard with the three grids, no draw
   await page.goto(url);
-  await page.waitForFunction(() => /Round no\. 1 · Grids on sale/.test(document.getElementById("headline").textContent));
+  await page.waitForFunction(() => /Round no\. 1 · Draw in about (5[01]|49) min/.test(document.getElementById("headline").textContent), null, { timeout: 20000 });
   assert.match(await text("leadSub"), /^0\.08 AVAX a grid · 3 grids sold so far/);
   await page.waitForFunction(() => document.querySelectorAll("#rank tbody tr").length === 3);
   assert.match(await text("nftIdle"), /The draw has not started/);
@@ -130,6 +130,11 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".svg": "image/s
   await ro.waitForFunction(() => document.querySelectorAll("#mine .card").length === 2, null, { timeout: 20000 });
   await ro.close();
   step("français, et suivi d'une adresse sans wallet");
+
+  // 6. a new round opens: the countdown restarts from its opening on chain
+  await (await bingo.createRound()).wait();
+  await page.waitForFunction(() => /Manche n° 2 · Tirage dans environ (5[01]|49) min/.test(document.getElementById("headline").textContent), null, { timeout: 30000 });
+  step("nouvelle manche : compte à rebours depuis l'ouverture");
 
   assert.deepEqual(errors, []);
   await browser.close(); server.close();
