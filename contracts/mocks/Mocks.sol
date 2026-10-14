@@ -420,3 +420,54 @@ contract MockLottery {
         }
     }
 }
+
+/// Test-only stand-in for BCM's BingoGameEngine: only the views the bingo page reads, plus
+/// setters that play the role of the operator and of Chainlink.
+contract MockBingo {
+    struct Round { uint8 phase; uint256 totalGrids; uint256 prizePool; uint16[100] pool; uint8[100] drawOrder; uint256[] gridIds; }
+    struct Grid { uint256 id; uint256 roundId; address owner; uint8 mulliganChoice; uint256 partyId; uint8 tier; uint8[30] cells; }
+    event RoundCreated(uint256 indexed roundId, uint256 timestamp);
+    event DrawOrderRevealed(uint256 indexed roundId);
+    uint256 public currentRoundId;
+    uint256 public gridCount;
+    uint256 public price = 0.08 ether;
+    mapping(uint256 => Round) internal rounds;
+    mapping(uint256 => Grid) internal gridOf;
+    uint16 public speedBonusThreshold = 80;
+    uint16 public megaJackpotThreshold = 84;
+
+    function createRound() external { currentRoundId++; rounds[currentRoundId].phase = 1; emit RoundCreated(currentRoundId, block.timestamp); }
+    function setPhase(uint256 roundId, uint8 phase) external { rounds[roundId].phase = phase; }
+    function setPool(uint256 roundId, uint16[100] calldata pool) external { rounds[roundId].pool = pool; }
+    function revealOrder(uint256 roundId, uint8[100] calldata order) external { rounds[roundId].drawOrder = order; rounds[roundId].phase = 3; emit DrawOrderRevealed(roundId); }
+    function addGrid(uint256 roundId, address owner, uint8[30] calldata cells) external returns (uint256 id) {
+        id = ++gridCount;
+        Grid storage g = gridOf[id];
+        g.id = id; g.roundId = roundId; g.owner = owner; g.cells = cells;
+        rounds[roundId].gridIds.push(id);
+        rounds[roundId].totalGrids++;
+        rounds[roundId].prizePool += (price * 85) / 100;
+    }
+    function getRoundInfo(uint256 roundId) external view returns (uint8 phase, uint256 totalGrids, uint256 prizePool, uint256 totalVolume, uint16 fastestBingo, bytes32 merkleRoot) {
+        Round storage r = rounds[roundId];
+        return (r.phase, r.totalGrids, r.prizePool, r.totalGrids * price, 0, bytes32(0));
+    }
+    function getRoundPool(uint256 roundId) external view returns (uint16[100] memory) { return rounds[roundId].pool; }
+    function getRoundDrawOrder(uint256 roundId) external view returns (uint8[100] memory) { return rounds[roundId].drawOrder; }
+    function getRoundGridIds(uint256 roundId) external view returns (uint256[] memory) { return rounds[roundId].gridIds; }
+    function getOwnerGridsInRound(uint256 roundId, address owner) external view returns (uint256[] memory out) {
+        uint256[] storage ids = rounds[roundId].gridIds;
+        uint256 n;
+        for (uint256 i = 0; i < ids.length; i++) if (gridOf[ids[i]].owner == owner) n++;
+        out = new uint256[](n);
+        n = 0;
+        for (uint256 i = 0; i < ids.length; i++) if (gridOf[ids[i]].owner == owner) out[n++] = ids[i];
+    }
+    function getGridCells(uint256 gridId) external view returns (uint8[30] memory) { return gridOf[gridId].cells; }
+    function grids(uint256 id) external view returns (uint256, uint256, address, uint8, uint256, uint8) {
+        Grid storage g = gridOf[id];
+        return (g.id, g.roundId, g.owner, g.mulliganChoice, g.partyId, g.tier);
+    }
+    function getTicketPriceInAVAX(uint8) external view returns (uint256) { return price; }
+    function getTierBalances(uint8) external pure returns (uint256 megaJackpot, uint256 speedBonus, uint256 rollover) { return (3.5 ether, 1.25 ether, 0.4 ether); }
+}

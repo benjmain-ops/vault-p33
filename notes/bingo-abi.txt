@@ -1,0 +1,16 @@
+BingoGameEngine 0xeE23eEcA4C3876bB3729E1d0f508920d3A8B4D4F (Avalanche C-Chain), verified, solidity ^0.8.26
+Reads: currentRoundId() uint256; getRoundInfo(roundId) (phase uint8,totalGrids,prizePool,totalVolume,fastestBingo uint16,merkleRoot);
+ getTierInfo(roundId,tier) (prizePool,totalGrids,totalVolume,merkleRoot,fastestBingo); getTierResultat(roundId,tier) (speedEnJeu,megaEnJeu,attribue,reclame,rootSetAt,balaye bool,seuilSpeed uint16,seuilMega uint16);
+ getTierBalances(tier) (megaJackpot,speedBonus,rollover); getTierConfig() (count uint8,prices uint256[6],enabled bool[6]); getTicketPriceInAVAX(tier) uint256;
+ getRoundPool(roundId) uint16[100]; getRoundDrawOrder(roundId) uint8[100]; getRoundGridIds(roundId) uint256[]; getOwnerGridsInRound(roundId,owner) uint256[];
+ getGridCells(gridId) uint8[30]; grids(id) (id,roundId,owner,mulliganChoice uint8,partyId,tier uint8); gridCount(); getMulliganOptions(roundId,buyer) (uint8[30] x3);
+ claimable(addr) uint256; claimDeadline(addr) uint256; gainReclame(gridId,milestoneType) bool; megaDebut(); megaFin(); speedBonusThreshold(); megaJackpotThreshold(); paused(); priceFeed(); wavax(); collectionNft(); collectionSize() uint16; CLAIM_DELAY()
+Writes: buyGrid(roundId,mulliganChoice,tier) payable; buyGridBatch(roundId,mulliganChoices uint8[],tier) payable (max 50);
+ claimGridPrize(gridId,milestoneType uint8,amount,proof bytes32[]); batchClaimGridPrizes(gridIds[],milestoneTypes[],amounts[],proofs[][]); claimWinnings();
+ createParty(roundId,totalGrids uint16,maxParticipants uint16,tier) payable; joinParty(partyId) payable; cancelParty(partyId)
+Events: RoundCreated(roundId idx,timestamp); RoundClosed(roundId idx,totalGrids); PoolRevealed(roundId idx,uint16[100] pool); DrawOrderRevealed(roundId idx); RoundFinalized(roundId idx);
+ GridPurchased(gridId idx,roundId idx,buyer idx,mulliganChoice,avaxPaid,tier); MerkleRootSet(roundId idx,tier idx,root,fastestBingo,attribue); PrizeClaimed(gridId idx,owner idx,amount,tier);
+ WinningsClaimed(claimer idx,gross,fee); SpeedBonusWon(roundId,tier,amount); MegaJackpotWon(roundId,tier,amount); MegaProgramme(debut,fin); VRFRequestSent(roundId,requestId,type)
+Phases: 0 PENDING_POOL,1 BUYING,2 PENDING_DRAW,3 DRAWING,4 FINALIZED. Grid 5x6=30 cells, pool 100 numbers, draw limited to taillePioche (<= collectionSize 5000, >=100), numbers read NFT by NFT.
+Milestones: 0 line 7%,1 column 6%,2 corners 5%,3 double line 10%,4 first bingo 42%,5 second bingo 30%; 6 speed (<=80th), 7 mega (<=84th, 24h window). Pot: prize 85%, mega 5%, speed 4.5%, rollover 5.5%. Fee 3% to feeSplitter in WAVAX. Claims 15 min after root, expire 120 days.
+Leaf = keccak256(bytes.concat(keccak256(abi.encode(gridId, owner, milestoneType, amount)))). Price in USD 8 dec via Chainlink (staleness 1800 s); tier 0 = $3.

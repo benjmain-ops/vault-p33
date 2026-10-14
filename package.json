@@ -12,6 +12,8 @@
     "player": "node keeper/player.js",
     "test:play": "node scripts/build.js && node test/e2e-play.js",
     "play:assets": "node scripts/play-assets.js",
+    "test:bingo": "node scripts/build.js && node test/e2e-bingo.js",
+    "bingo:assets": "node scripts/bingo-assets.js",
     "announce": "node keeper/announce.js"
   },
   "dependencies": {

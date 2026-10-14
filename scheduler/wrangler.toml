@@ -7,7 +7,10 @@ preview_urls = false
 
 [vars]
 GH_REPO = "benjmain-ops/vault-p33"   # the repository whose workflows are started; change it in a fork
+BINGO_URL = "https://benjmain-ops.github.io/vault-p33/bingo/"   # behind the button of the bingo messages
+BINGO_LANG = "en"
 
 [triggers]
 # UTC. Draws are at 06:00 and 18:00 UTC. These must match the keys of SCHEDULE in worker.js.
-crons = ["13 3,4,15,16 * * *", "30,44 5,17 * * *", "1,5,35 6,18 * * *"]
+# The fourth one watches the bingo every minute (remove it to keep only the lottery).
+crons = ["13 3,4,15,16 * * *", "30,44 5,17 * * *", "1,5,35 6,18 * * *", "* * * * *"]

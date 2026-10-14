@@ -19,6 +19,7 @@ Web page: `docs/` (GitHub Pages). Everything can be done from a phone, inside a 
 | Results bot | `keeper/announce.js`, `.github/workflows/results.yml`, `teaser.yml` | Publishes each draw's result to a Telegram chat. Read-only, no wallet key |
 | Web page | `docs/` | Wallet connection, vault creation, deposit, withdrawal, settings, dry run |
 | Play page | `docs/play/` | "Sixte", an independent interface to the lottery itself: pick numbers, buy tickets, see results, claim prizes. No vault needed |
+| Bingo page | `docs/bingo/` | "Trente", a screen for BCM's bingo: the draw as it happens (one number a second from the moment the order is published on chain), the player's grids, the leaderboard of the round. Read-only |
 | Tests | `test/` | Contracts and bots on a local chain, and the page in a real browser |
 
 ## Two ways to play
@@ -187,6 +188,24 @@ the same secrets; set the variable `ANNOUNCE_TEASER` to `off` to keep only the r
 Telegram requires Mini Apps that use crypto-assets to be built on TON only. This bot is not a
 Mini App, it only posts messages; whether a link to an Avalanche page is welcome in your channel
 remains your call, and so does the law on advertising games of chance where you live.
+
+## The bingo page
+
+`docs/bingo/` follows BCM's bingo (`BingoGameEngine`). It reads the round, the 100 NFTs of
+its pool and the order they come out in, and replays that order on the local clock from the
+time of the `DrawOrderRevealed` event, one number a second (`bingoSecondsPerNumber` in
+`config.js`), so that it shows the same numbers as the official site at the same time. Grids
+light up as numbers come out; the leaderboard ranks every grid of the round by what it is
+missing for a bingo. A finished draw can be replayed. `?a=0x…` follows a wallet's grids
+without connecting. Buying grids and claiming prizes are done on the official site for now.
+
+The Cloudflare Worker of `scheduler/` also watches the bingo every minute and posts to a
+Telegram chat when a round opens and when its draw starts: add the secrets `BINGO_BOT_TOKEN`
+and `BINGO_CHAT` to the Worker (`BINGO_URL` and `BINGO_LANG` are set in `wrangler.toml`).
+
+Assumptions to check against the first real rounds: that the order lists positions of the
+pool (the page accepts 0- or 1-based), and that the official site paces the draw from the
+publication of the order.
 
 ## Install the play page
 

@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Trente</title>
+<meta name="description" content="Trente: an independent screen for the BCM DAO bingo on Avalanche. The draw as it happens, your grids, the leaderboard.">
+<meta name="theme-color" content="#0B0D12">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Trente">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Trente">
+<meta property="og:description" content="The BCM DAO bingo on Avalanche: the draw as it happens, your grids, the leaderboard.">
+<meta property="og:url" content="https://benjmain-ops.github.io/vault-p33/bingo/">
+<meta property="og:image" content="https://benjmain-ops.github.io/vault-p33/bingo/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  @font-face { font-family: "Archivo"; src: url("../play/fonts/archivo.woff2") format("woff2"); font-weight: 100 900; font-stretch: 62% 125%; font-display: swap; }
+  /* The draw happens at night: dark stage, the same three colours as the play page (red, pen blue, gold). */
+  :root {
+    --page: #0B0D12; --paper: #151922; --ink: #F4F5F7; --muted: #AAB1BD; --rule: #2A3140;
+    --red: #DC2F33; --pen: #4D74F0; --gold: #F2C230; --bad: #B3261E; --narrow: 64%;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 400 1rem/1.5 "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  button:disabled { cursor: default; opacity: 0.55; }
+  :focus-visible { outline: 3px solid var(--pen); outline-offset: 2px; border-radius: 4px; }
+  a { color: var(--pen); }
+  .num { font-variant-numeric: tabular-nums; }
+  [hidden] { display: none !important; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 0; }
+  .brand { font-weight: 800; font-stretch: var(--narrow); font-size: 1.75rem; color: var(--ink); text-decoration: none; line-height: 1; }
+  .top-actions { display: flex; align-items: center; gap: 8px; }
+  .btn { border: 1.5px solid var(--ink); background: transparent; border-radius: 8px; padding: 10px 14px; font-weight: 650; line-height: 1.2; min-height: 44px; }
+  .btn.primary { background: var(--pen); border-color: var(--pen); color: #fff; }
+  .btn.quiet { border-color: transparent; padding-inline: 10px; color: var(--muted); }
+  .btn.small { min-height: 38px; padding: 7px 12px; font-size: 0.9375rem; }
+
+  .lead { padding: 10px 0 18px; }
+  .lead small { display: block; color: var(--muted); font-weight: 500; }
+  h1 { margin: 2px 0 0; font-weight: 800; font-stretch: var(--narrow); font-size: clamp(2.2rem, 9vw, 4.4rem); line-height: 0.95; }
+  .lead p { margin: 10px 0 0; color: var(--muted); max-width: 52ch; }
+
+  /* the stage: the NFT that just came out, its number, the last ones */
+  .stage { display: grid; gap: 18px; align-items: center; grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 720px) { .stage { grid-template-columns: 300px minmax(0, 1fr); gap: 28px; } }
+  .nft { position: relative; aspect-ratio: 1; width: 100%; max-width: 300px; border-radius: 14px; background: var(--paper); overflow: hidden; box-shadow: 0 0 0 1px var(--rule), 0 24px 40px -28px rgba(0,0,0,.9); }
+  .nft img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .nft .badge { position: absolute; left: 12px; bottom: 12px; min-width: 64px; height: 64px; padding: 0 14px; border-radius: 32px; display: grid; place-items: center;
+    background: radial-gradient(circle at 32% 28%, #FF7A70, #DC2F33 58%, #A51B1F); color: #fff; font-weight: 800; font-stretch: var(--narrow); font-size: 2.1rem; box-shadow: 0 0 28px rgba(220,47,51,.5); }
+  .nft .idle { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); text-align: center; padding: 20px; }
+  .nft.pop { animation: pop .45s cubic-bezier(.2,1.5,.4,1); }
+  @keyframes pop { from { transform: scale(.92); } }
+  .recent { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .ball { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-stretch: var(--narrow); font-size: 1.25rem; color: #fff;
+    background: radial-gradient(circle at 32% 28%, #FF7A70, #DC2F33 58%, #A51B1F); box-shadow: inset 0 -4px 0 rgba(0,0,0,.18); }
+  .ball.old { opacity: .55; }
+  .meter { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 14px; }
+  .meter div b { display: block; font-size: 1.5rem; font-weight: 800; font-stretch: var(--narrow); line-height: 1.05; }
+  .meter div span { font-size: .875rem; color: var(--muted); }
+  .meter .gold b { color: var(--gold); }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+
+  /* the 100 numbers */
+  .board { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; margin-top: 22px; }
+  .board span { aspect-ratio: 1; display: grid; place-items: center; border-radius: 6px; background: var(--paper); color: var(--muted); font-weight: 650; font-size: .875rem; box-shadow: inset 0 0 0 1px var(--rule); }
+  .board span.out { background: var(--red); color: #fff; box-shadow: none; }
+  .board span.mine { box-shadow: inset 0 0 0 2px var(--gold); }
+  .board span.out.mine { background: var(--gold); color: #15181D; }
+
+  section { margin-top: 32px; }
+  h2 { margin: 0 0 10px; font-weight: 800; font-stretch: var(--narrow); font-size: 1.5rem; }
+  .cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+  .card { background: var(--paper); border-radius: 12px; padding: 12px; box-shadow: 0 0 0 1px var(--rule); }
+  .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+  .card-head b { font-weight: 800; font-stretch: var(--narrow); font-size: 1.125rem; }
+  .card-head span { font-size: .875rem; color: var(--muted); }
+  .g { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+  .g span { aspect-ratio: 1; display: grid; place-items: center; border-radius: 6px; font-weight: 700; font-stretch: var(--narrow); font-size: 1rem; background: #0B0D12; color: var(--muted); box-shadow: inset 0 0 0 1px var(--rule); }
+  .g span.hit { background: var(--gold); color: #15181D; box-shadow: none; }
+  .g span.hit.fresh { animation: hit .5s; }
+  @keyframes hit { from { transform: scale(1.25); } }
+  .need { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 8px; font-size: .875rem; color: var(--muted); }
+  .need b { color: var(--ink); font-weight: 700; }
+  .need .done { color: var(--gold); }
+
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--rule); }
+  th { color: var(--muted); font-weight: 600; font-size: .8125rem; }
+  td.r, th.r { text-align: right; }
+  tr.mine td { color: var(--gold); font-weight: 700; }
+  .addr { font-family: ui-monospace, monospace; font-size: .875rem; }
+  .empty { color: var(--muted); }
+
+  footer { margin: 40px 0 24px; color: var(--muted); font-size: .875rem; }
+  footer p { margin: 6px 0; }
+  dialog { background: var(--paper); color: var(--ink); border: 0; border-radius: 14px; padding: 20px; width: min(92vw, 400px); }
+  dialog::backdrop { background: rgba(0,0,0,.6); }
+  dialog h2 { margin: 0 0 12px; }
+  #walletList { display: grid; gap: 8px; }
+  #dlgHint { color: var(--muted); font-size: .9375rem; }
+  #toast { position: fixed; left: 16px; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); margin: 0 auto; max-width: 520px; background: var(--ink); color: #15181D; padding: 13px 16px; border-radius: 10px; font-weight: 550; z-index: 10; }
+  #toast:empty { display: none; }
+  #toast[data-kind="err"] { background: var(--bad); color: #fff; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="./">Trente</a>
+    <div class="top-actions">
+      <button class="btn quiet small" id="langBtn" type="button"></button>
+      <button class="btn small" id="connectBtn" type="button"></button>
+    </div>
+  </header>
+
+  <main>
+    <section class="lead">
+      <small id="leadSmall">&nbsp;</small>
+      <h1 id="headline">&nbsp;</h1>
+      <p id="leadSub">&nbsp;</p>
+    </section>
+
+    <div class="stage">
+      <div class="nft" id="nft"><div class="idle" id="nftIdle"></div></div>
+      <div>
+        <div class="recent" id="recent"></div>
+        <div class="meter" id="meter"></div>
+        <div class="controls" id="controls"></div>
+      </div>
+    </div>
+    <div class="board" id="board"></div>
+
+    <section id="mineSec">
+      <h2 id="mineTitle"></h2>
+      <div class="cards" id="mine"></div>
+    </section>
+
+    <section id="boardSec">
+      <h2 id="rankTitle"></h2>
+      <div id="rank"></div>
+    </section>
+  </main>
+
+  <footer>
+    <p id="footIndep"></p>
+    <p id="footRisk"></p>
+    <p><a id="footContract" target="_blank" rel="noopener"></a> · <a id="footSite" href="https://bcmdao.io/bingo" target="_blank" rel="noopener"></a> · <a id="footPlay" href="../play/"></a></p>
+  </footer>
+</div>
+
+<dialog id="walletDlg">
+  <h2 id="dlgTitle"></h2>
+  <div id="walletList"></div>
+  <p id="dlgHint"></p>
+  <button class="btn small quiet" id="dlgClose" type="button"></button>
+</dialog>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="../config.js"></script>
+<script src="../ethers.umd.min.js"></script>
+<script>
+(() => {
+  const CFG = window.VAULT_CONFIG;
+  const E = ethers;
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k) { try { return localStorage.getItem("trente." + k); } catch (_) { return null; } },
+    set(k, v) { try { localStorage.setItem("trente." + k, v); } catch (_) {} },
+  };
+  const BINGO = (CFG.addresses.bingo || "0xeE23eEcA4C3876bB3729E1d0f508920d3A8B4D4F");
+  const IPFS = CFG.ipfsGateway || "https://ipfs.io/ipfs/";
+  const NFT_CID = CFG.bingoNftCid || "bafybeihupyplt2ydu6fgucbhgpkeertanu3su2f37xovx2ixkfbyqsa479";
+  const SECOND_PER_NUMBER = Number(CFG.bingoSecondsPerNumber || 1);
+  const PHASES = ["pending", "buying", "pendingDraw", "drawing", "finalized"];
+  const MILESTONES = [["line", 7], ["column", 6], ["corners", 5], ["double", 10], ["bingo", 42]];
+
+  const TEXT = {
+    en: {
+      otherLang: "Français", connect: "Connect",
+      brandSub: "BCM DAO's bingo on Avalanche",
+      round: (n) => `Round no. ${n}`,
+      phase: { pending: "Getting ready", buying: "Grids on sale", pendingDraw: "Sale closed, draw coming", drawing: "Drawing", drawn: "Draw over", finalized: "Draw over" },
+      sub: {
+        pending: "The round's numbers are being set. Nothing to do yet.",
+        buying: (price, grids) => `${price} AVAX a grid · ${grids} grid${grids === 1 ? "" : "s"} sold so far. Buy on the official site, then watch here.`,
+        pendingDraw: "The order of the numbers is being drawn. The draw starts the moment it is published.",
+        drawing: (i, n) => `Number ${i} of ${n}. One every second.`,
+        drawn: "All the numbers are out. The operator now sets the prizes.",
+        finalized: "Prizes are set by the operator after the draw, then claimable on the official site.",
+      },
+      idle: { pending: "The draw has not started.", buying: "The draw has not started.", pendingDraw: "Waiting for the first number…", done: "Replay the draw", none: "No round yet." },
+      prize: "AVAX prize pot", grids: "grids", speed: (n) => `Speed bonus if a bingo by no. ${n}`, mega: (n) => `Mega jackpot if a bingo by no. ${n}`,
+      mAvax: "AVAX speed bonus", mMega: "AVAX mega jackpot", mRoll: "AVAX rollover",
+      replay: "Replay", skip: "Jump to the end", live: "Back to live", pause: "Pause", play: "Play",
+      mineTitle: "My grids", mineNone: "Connect your wallet to see your grids in this round.", mineEmpty: "No grid of yours in this round.",
+      rankTitle: "Leaderboard", rankSub: (n) => `${n} grids in the round, ranked by what is left to a bingo.`,
+      thRank: "#", thGrid: "Grid", thOwner: "Owner", thBingo: "To bingo", thLine: "To a line", thHits: "Hits",
+      need: { line: "line", column: "column", corners: "corners", double: "2 lines", bingo: "bingo" }, left: (n) => `${n} left`, got: "done",
+      gridNo: (id) => `Grid #${id}`,
+      footIndep: "Trente is an independent screen for BCM DAO's bingo. It only reads the chain; buying and claiming happen on the official site for now.",
+      footRisk: "A game of chance pays back less than it takes, on average. Play only what you can afford to lose, where it is legal.",
+      footContract: "Bingo contract", footSite: "Official site", footPlay: "Sixte, the lottery",
+      dlgTitle: "Connect a wallet", dlgClose: "Close", browserWallet: "Browser wallet", openTrust: "Open in Trust Wallet", openMetaMask: "Open in MetaMask",
+      dlgHint: "Read-only: the wallet is only used to find your grids.", dlgNoWallet: "No wallet here. Open Trente inside your wallet's app, or add ?a=0x… to the address to watch any wallet's grids.",
+      eRejected: "Cancelled in the wallet.",
+    },
+    fr: {
+      otherLang: "English", connect: "Connecter",
+      brandSub: "Le bingo de BCM DAO sur Avalanche",
+      round: (n) => `Manche n° ${n}`,
+      phase: { pending: "Préparation", buying: "Grilles en vente", pendingDraw: "Vente close, tirage imminent", drawing: "Tirage en cours", drawn: "Tirage terminé", finalized: "Tirage terminé" },
+      sub: {
+        pending: "Les numéros de la manche se mettent en place. Rien à faire pour l'instant.",
+        buying: (price, grids) => `${price} AVAX la grille · ${grids} grille${grids > 1 ? "s" : ""} vendue${grids > 1 ? "s" : ""}. Achète sur le site officiel, puis suis le tirage ici.`,
+        pendingDraw: "L'ordre des numéros est en train d'être tiré. Le direct commence dès sa publication.",
+        drawing: (i, n) => `Numéro ${i} sur ${n}. Un par seconde.`,
+        drawn: "Tous les numéros sont sortis. L'opérateur fixe maintenant les gains.",
+        finalized: "Les gains sont fixés par l'opérateur après le tirage, puis réclamables sur le site officiel.",
+      },
+      idle: { pending: "Le tirage n'a pas commencé.", buying: "Le tirage n'a pas commencé.", pendingDraw: "En attente du premier numéro…", done: "Revoir le tirage", none: "Pas encore de manche." },
+      prize: "AVAX en jeu", grids: "grilles", speed: (n) => `Bonus Speed si bingo avant le n° ${n}`, mega: (n) => `Mega jackpot si bingo avant le n° ${n}`,
+      mAvax: "AVAX bonus Speed", mMega: "AVAX mega jackpot", mRoll: "AVAX de report",
+      replay: "Revoir", skip: "Aller à la fin", live: "Retour au direct", pause: "Pause", play: "Lecture",
+      mineTitle: "Mes grilles", mineNone: "Connecte ton wallet pour voir tes grilles de cette manche.", mineEmpty: "Aucune grille à toi dans cette manche.",
+      rankTitle: "Classement", rankSub: (n) => `${n} grilles dans la manche, classées par ce qui manque pour un bingo.`,
+      thRank: "#", thGrid: "Grille", thOwner: "Joueur", thBingo: "Avant bingo", thLine: "Avant ligne", thHits: "Sorties",
+      need: { line: "ligne", column: "colonne", corners: "coins", double: "2 lignes", bingo: "bingo" }, left: (n) => `${n} manquant${n > 1 ? "s" : ""}`, got: "fait",
+      gridNo: (id) => `Grille n° ${id}`,
+      footIndep: "Trente est un écran indépendant pour le bingo de BCM DAO. Il ne fait que lire la chaîne ; l'achat et les gains passent par le site officiel pour l'instant.",
+      footRisk: "Un jeu de hasard rend moins qu'il ne prend, en moyenne. Ne joue que ce que tu peux perdre, là où c'est légal.",
+      footContract: "Contrat du bingo", footSite: "Site officiel", footPlay: "Sixte, la loterie",
+      dlgTitle: "Connecter un wallet", dlgClose: "Fermer", browserWallet: "Wallet du navigateur", openTrust: "Ouvrir dans Trust Wallet", openMetaMask: "Ouvrir dans MetaMask",
+      dlgHint: "Lecture seule : le wallet sert seulement à retrouver tes grilles.", dlgNoWallet: "Aucun wallet ici. Ouvre Trente dans l'app de ton wallet, ou ajoute ?a=0x… à l'adresse pour suivre les grilles d'un wallet.",
+      eRejected: "Annulé dans le wallet.",
+    },
+  };
+  let lang = store.get("lang") === "fr" ? "fr" : "en";
+  let L = TEXT[lang];
+
+  const ABI = [
+    "function currentRoundId() view returns (uint256)",
+    "function getRoundInfo(uint256) view returns (uint8 phase,uint256 totalGrids,uint256 prizePool,uint256 totalVolume,uint16 fastestBingo,bytes32 merkleRoot)",
+    "function getRoundPool(uint256) view returns (uint16[100])",
+    "function getRoundDrawOrder(uint256) view returns (uint8[100])",
+    "function getRoundGridIds(uint256) view returns (uint256[])",
+    "function getOwnerGridsInRound(uint256,address) view returns (uint256[])",
+    "function getGridCells(uint256) view returns (uint8[30])",
+    "function grids(uint256) view returns (uint256 id,uint256 roundId,address owner,uint8 mulliganChoice,uint256 partyId,uint8 tier)",
+    "function getTicketPriceInAVAX(uint8) view returns (uint256)",
+    "function getTierBalances(uint8) view returns (uint256 megaJackpot,uint256 speedBonus,uint256 rollover)",
+    "function getTierResultat(uint256,uint8) view returns (uint256 speedEnJeu,uint256 megaEnJeu,uint256 attribue,uint256 reclame,uint256 rootSetAt,bool balaye,uint16 seuilSpeed,uint16 seuilMega)",
+    "function speedBonusThreshold() view returns (uint16)",
+    "function megaJackpotThreshold() view returns (uint16)",
+    "event DrawOrderRevealed(uint256 indexed roundId)",
+    "event RoundCreated(uint256 indexed roundId, uint256 timestamp)",
+  ];
+  const read = new E.JsonRpcProvider(new URL(CFG.rpcUrl, location.href).href, Number(CFG.chainId), { staticNetwork: true, batchMaxCount: 10 });
+  const bingo = new E.Contract(BINGO, ABI, read);
+
+  const S = {
+    account: null, roundId: 0n, info: null, phase: "none", pool: [], order: [], drawCount: 100,
+    startAt: 0, // unix seconds when the order was published: number i (1-based) comes out at startAt + (i-1) * SECOND_PER_NUMBER
+    shown: 0, // numbers shown so far
+    replay: null, // { from: timestamp } when the user replays a finished draw; null = live
+    paused: false,
+    gridIds: [], cells: new Map(), owners: new Map(), mine: [],
+    price: 0n, balances: null, thresholds: [80, 84], timer: 0, lastShown: -1,
+  };
+  const params = new URLSearchParams(location.search);
+  if (params.get("a") && E.isAddress(params.get("a"))) S.account = E.getAddress(params.get("a"));
+
+  const fmt = (x, digits = 2) => {
+    const [i, f = ""] = E.formatEther(x).split(".");
+    const frac = f.slice(0, digits).replace(/0+$/, "");
+    return Number(i).toLocaleString(lang === "fr" ? "fr-FR" : "en-US") + (frac ? (lang === "fr" ? "," : ".") + frac : "");
+  };
+  const short = (a) => a.slice(0, 6) + "…" + a.slice(-4);
+  let toastTimer = 0;
+  function toast(msg, kind = "") { const t = $("toast"); t.textContent = msg; t.dataset.kind = kind; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.textContent = ""; }, 6000); }
+  function explain(e) { if (e && (e.code === "ACTION_REJECTED" || e.code === 4001)) return L.eRejected; return String((e && (e.shortMessage || e.message)) || e).slice(0, 160); }
+
+  // ── the draw: the numbers out after n steps ──
+  // drawOrder holds, for each step, the index of the number (positions 1..100 of the pool, as the grids use them).
+  function outAfter(n) { return S.order.slice(0, Math.max(0, Math.min(n, S.drawCount))).map((x) => Number(x) + (S.orderBase === 0 ? 1 : 0)); }
+  // what a grid is missing: rows of 6, columns of 5, four corners, two rows, everything
+  function needs(cells, out) {
+    const hit = cells.map((c) => out.has(c));
+    const rows = [0, 1, 2, 3, 4].map((r) => hit.slice(r * 6, r * 6 + 6).filter((h) => !h).length);
+    const cols = [0, 1, 2, 3, 4, 5].map((c) => [0, 1, 2, 3, 4].filter((r) => !hit[r * 6 + c]).length);
+    const corners = [0, 5, 24, 29].filter((i) => !hit[i]).length;
+    const sorted = [...rows].sort((a, b) => a - b);
+    return { line: Math.min(...rows), column: Math.min(...cols), corners, double: sorted[0] + sorted[1], bingo: hit.filter((h) => !h).length, hits: hit.filter(Boolean).length, hit };
+  }
+
+  // ── rendering ──
+  function renderChrome() {
+    document.documentElement.lang = lang;
+    $("langBtn").textContent = L.otherLang;
+    $("connectBtn").textContent = S.account ? short(S.account) : L.connect;
+    $("leadSmall").textContent = L.brandSub;
+    $("footIndep").textContent = L.footIndep; $("footRisk").textContent = L.footRisk;
+    $("footContract").textContent = L.footContract; $("footContract").href = CFG.explorer + "/address/" + BINGO;
+    $("footSite").textContent = L.footSite; $("footPlay").textContent = L.footPlay;
+    $("dlgTitle").textContent = L.dlgTitle; $("dlgClose").textContent = L.dlgClose;
+    $("mineTitle").textContent = L.mineTitle; $("rankTitle").textContent = L.rankTitle;
+  }
+  function renderLead() {
+    if (S.phase === "none") { $("headline").textContent = L.idle.none; $("leadSub").textContent = " "; return; }
+    // once the last number is out, the draw is over even if the operator has not finalized the round yet
+    const ended = S.startAt && Date.now() / 1000 >= S.startAt + S.drawCount * SECOND_PER_NUMBER;
+    const ph = S.phase === "drawing" && ended ? "drawn" : S.phase;
+    $("headline").textContent = L.round(S.roundId) + " · " + L.phase[ph];
+    const sub = L.sub[ph];
+    $("leadSub").textContent = ph === "buying" ? sub(fmt(S.price, 3), Number(S.info.totalGrids)) : ph === "drawing" ? sub(S.shown, S.drawCount) : sub;
+  }
+  function renderStage() {
+    const out = outAfter(S.shown);
+    const nft = $("nft");
+    const last = out[out.length - 1];
+    if (last) {
+      const id = S.pool[last - 1];
+      if (S.lastShown !== last) {
+        nft.innerHTML = `<img alt="NFT ${id}" src="${IPFS}${NFT_CID}/${id}.jpg"><div class="badge">${last}</div>`;
+        nft.classList.remove("pop"); void nft.offsetWidth; nft.classList.add("pop");
+        S.lastShown = last;
+      }
+    } else {
+      const key = S.phase === "finalized" ? "done" : S.phase === "pendingDraw" ? "pendingDraw" : S.phase === "none" ? "none" : "buying";
+      nft.innerHTML = `<div class="idle" id="nftIdle">${L.idle[key]}</div>`; S.lastShown = -1;
+    }
+    $("recent").innerHTML = out.slice(-10).reverse().map((n, i) => `<span class="ball${i ? " old" : ""}">${n}</span>`).join("");
+    const m = [];
+    if (S.info) m.push(`<div class="gold"><b>${fmt(S.info.prizePool)}</b><span>${L.prize}</span></div>`, `<div><b>${Number(S.info.totalGrids)}</b><span>${L.grids}</span></div>`);
+    if (S.balances) m.push(`<div><b>${fmt(S.balances.speedBonus)}</b><span>${L.mAvax} · ${L.speed(S.thresholds[0])}</span></div>`, `<div><b>${fmt(S.balances.megaJackpot)}</b><span>${L.mMega} · ${L.mega(S.thresholds[1])}</span></div>`);
+    $("meter").innerHTML = m.join("");
+    const c = [];
+    const ended = S.startAt && Date.now() / 1000 >= S.startAt + S.drawCount * SECOND_PER_NUMBER;
+    if (S.replay) c.push(`<button class="btn small" id="pauseBtn" type="button">${S.paused ? L.play : L.pause}</button>`, `<button class="btn small" id="skipBtn" type="button">${L.skip}</button>`, `<button class="btn small quiet" id="liveBtn" type="button">${L.live}</button>`);
+    else if (ended && S.order.length) c.push(`<button class="btn small primary" id="replayBtn" type="button">${L.replay}</button>`);
+    $("controls").innerHTML = c.join("");
+    if ($("replayBtn")) $("replayBtn").onclick = () => { S.replay = { from: Date.now() / 1000, shown: 0 }; S.paused = false; tick(); };
+    if ($("liveBtn")) $("liveBtn").onclick = () => { S.replay = null; tick(); };
+    if ($("skipBtn")) $("skipBtn").onclick = () => { S.replay.shown = S.drawCount; S.paused = true; tick(); };
+    if ($("pauseBtn")) $("pauseBtn").onclick = () => { S.paused = !S.paused; S.replay.from = Date.now() / 1000 - (S.replay.shown || 0) * SECOND_PER_NUMBER; tick(); };
+    const mineCells = new Set(S.mine.flatMap((id) => S.cells.get(id) || []));
+    const outSet = new Set(out);
+    $("board").innerHTML = [...Array(100).keys()].map((i) => `<span class="${outSet.has(i + 1) ? "out" : ""}${mineCells.has(i + 1) ? " mine" : ""}">${i + 1}</span>`).join("");
+  }
+  function renderMine() {
+    const box = $("mine");
+    if (!S.account) { box.innerHTML = `<p class="empty">${L.mineNone}</p>`; return; }
+    if (!S.mine.length) { box.innerHTML = `<p class="empty">${L.mineEmpty}</p>`; return; }
+    const out = new Set(outAfter(S.shown)), fresh = outAfter(S.shown).slice(-1)[0];
+    box.innerHTML = S.mine.map((id) => {
+      const cells = S.cells.get(id); if (!cells) return "";
+      const n = needs(cells, out);
+      const g = cells.map((c, i) => `<span class="${n.hit[i] ? "hit" : ""}${c === fresh ? " fresh" : ""}">${c}</span>`).join("");
+      const need = MILESTONES.map(([k]) => `<span class="${n[k] === 0 ? "done" : ""}">${L.need[k]} <b>${n[k] === 0 ? L.got : L.left(n[k])}</b></span>`).join("");
+      return `<div class="card"><div class="card-head"><b>${L.gridNo(id)}</b><span>${n.hits}/30</span></div><div class="g">${g}</div><div class="need">${need}</div></div>`;
+    }).join("");
+  }
+  function renderRank() {
+    const box = $("rank");
+    if (!S.gridIds.length) { box.innerHTML = `<p class="empty">${S.phase === "none" ? "" : L.rankSub(0)}</p>`; return; }
+    const out = new Set(outAfter(S.shown));
+    const rows = S.gridIds.map((id) => ({ id, n: needs(S.cells.get(id) || [], out), owner: S.owners.get(id) || "" }))
+      .sort((a, b) => a.n.bingo - b.n.bingo || a.n.line - b.n.line || b.n.hits - a.n.hits || Number(a.id - b.id));
+    const mine = new Set(S.mine.map(String));
+    const top = rows.slice(0, 25);
+    box.innerHTML = `<p class="empty">${L.rankSub(S.gridIds.length)}</p><table><thead><tr><th>${L.thRank}</th><th>${L.thGrid}</th><th>${L.thOwner}</th><th class="r">${L.thBingo}</th><th class="r">${L.thLine}</th><th class="r">${L.thHits}</th></tr></thead><tbody>` +
+      top.map((r, i) => `<tr class="${mine.has(String(r.id)) ? "mine" : ""}"><td>${i + 1}</td><td>#${r.id}</td><td class="addr">${r.owner ? short(r.owner) : ""}</td><td class="r">${r.n.bingo}</td><td class="r">${r.n.line}</td><td class="r">${r.n.hits}</td></tr>`).join("") + "</tbody></table>";
+  }
+  function renderAll() { renderChrome(); renderLead(); renderStage(); renderMine(); renderRank(); }
+
+  // ── the clock of the draw ──
+  function tick() {
+    clearTimeout(S.timer);
+    let shown;
+    if (S.replay) {
+      shown = S.paused ? S.replay.shown : Math.floor((Date.now() / 1000 - S.replay.from) / SECOND_PER_NUMBER);
+      shown = Math.min(S.drawCount, shown); S.replay.shown = shown;
+    } else if (S.startAt && S.order.length) shown = Math.max(0, Math.min(S.drawCount, Math.floor((Date.now() / 1000 - S.startAt) / SECOND_PER_NUMBER) + 1));
+    else shown = 0;
+    if (shown !== S.shown) { S.shown = shown; renderLead(); renderStage(); renderMine(); renderRank(); }
+    else renderStage();
+    const running = S.replay ? !S.paused && shown < S.drawCount : S.startAt && shown < S.drawCount;
+    if (running) S.timer = setTimeout(tick, 250);
+  }
+
+  // ── reading the chain ──
+  async function soft(p, d) { try { return await p; } catch (_) { return d; } }
+  async function loadRound() {
+    const id = await bingo.currentRoundId();
+    const changed = id !== S.roundId;
+    S.roundId = id;
+    if (id === 0n) { S.phase = "none"; renderAll(); return; }
+    const [info, price, balances, t1, t2] = await Promise.all([bingo.getRoundInfo(id), soft(bingo.getTicketPriceInAVAX(0), 0n), soft(bingo.getTierBalances(0), null), soft(bingo.speedBonusThreshold(), 80), soft(bingo.megaJackpotThreshold(), 84)]);
+    S.info = info; S.price = price; S.balances = balances; S.thresholds = [Number(t1), Number(t2)];
+    const phase = PHASES[Number(info.phase)] || "pending";
+    const phaseChanged = phase !== S.phase || changed;
+    S.phase = phase;
+    if (changed) { S.pool = []; S.order = []; S.startAt = 0; S.replay = null; S.gridIds = []; S.cells.clear(); S.owners.clear(); S.mine = []; S.shown = 0; }
+    if ((phase === "drawing" || phase === "finalized") && !S.order.length) {
+      const [pool, order] = await Promise.all([bingo.getRoundPool(id), bingo.getRoundDrawOrder(id)]);
+      S.pool = Array.from(pool, Number); S.order = Array.from(order, Number);
+      // the order lists positions: 0-based or 1-based, the contract does not say; 0 present means 0-based
+      S.orderBase = S.order.includes(0) ? 0 : 1;
+      S.drawCount = S.order.length;
+      S.startAt = await drawStart(id);
+    }
+    if (phaseChanged || !S.gridIds.length) await loadGrids();
+    renderAll(); tick();
+  }
+  /** When the order was published: the time of the block of the DrawOrderRevealed event (the draw reads one number a second from there). */
+  async function drawStart(id) {
+    try {
+      const latest = await read.getBlockNumber();
+      const filter = bingo.filters.DrawOrderRevealed(id);
+      // Avalanche: about one block every 2 s; look back a day in slices the public RPC accepts
+      for (let to = latest, i = 0; i < 24 && to > 0; i++) {
+        const from = Math.max(0, to - 2000);
+        const logs = await bingo.queryFilter(filter, from, to);
+        if (logs.length) return Number((await read.getBlock(logs[logs.length - 1].blockNumber)).timestamp);
+        to = from - 1;
+      }
+    } catch (e) { console.warn("draw start", e); }
+    // unknown start: show the whole draw at once, replay stays available
+    return 1;
+  }
+  async function loadGrids() {
+    const ids = Array.from(await soft(bingo.getRoundGridIds(S.roundId), [])).slice(0, 600);
+    S.gridIds = ids;
+    const missing = ids.filter((id) => !S.cells.has(id));
+    for (let i = 0; i < missing.length; i += 40) {
+      const chunk = missing.slice(i, i + 40);
+      const [cells, metas] = await Promise.all([Promise.all(chunk.map((id) => bingo.getGridCells(id))), Promise.all(chunk.map((id) => soft(bingo.grids(id), null)))]);
+      chunk.forEach((id, k) => { S.cells.set(id, Array.from(cells[k], Number)); if (metas[k]) S.owners.set(id, metas[k].owner); });
+    }
+    S.mine = S.account ? ids.filter((id) => (S.owners.get(id) || "").toLowerCase() === S.account.toLowerCase()) : [];
+  }
+  async function refresh() {
+    try { await loadRound(); } catch (e) { console.error(e); }
+    // slow polling: the phase and the grids; the draw itself runs on the local clock
+    setTimeout(refresh, S.phase === "drawing" || S.phase === "pendingDraw" ? 5000 : 12000);
+  }
+
+  // ── wallet (read-only: only to find the grids) ──
+  const found = new Map();
+  window.addEventListener("eip6963:announceProvider", (ev) => found.set(ev.detail.info.uuid, ev.detail));
+  window.dispatchEvent(new Event("eip6963:requestProvider"));
+  const appUrl = () => location.origin + location.pathname;
+  function openWalletDialog() {
+    const box = $("walletList"); box.textContent = "";
+    const add = (name, get, primary, id) => {
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn" + (primary ? " primary" : ""); b.textContent = name; if (id) b.id = id;
+      b.onclick = async () => { try { await connect(await get()); $("walletDlg").close(); } catch (e) { console.error(e); toast(explain(e), "err"); } };
+      box.appendChild(b);
+    };
+    let i = 0;
+    for (const w of found.values()) add(w.info.name, () => w.provider, i++ === 0);
+    if (!found.size && window.ethereum) add(L.browserWallet, () => window.ethereum, true);
+    if (!found.size && !window.ethereum) {
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn primary"; b.id = "openInTrust"; b.textContent = L.openTrust;
+      b.onclick = () => { location.href = "https://link.trustwallet.com/open_url?coin_id=10009000&url=" + encodeURIComponent(appUrl()); };
+      box.appendChild(b);
+      const m = document.createElement("button"); m.type = "button"; m.className = "btn"; m.id = "openInMetaMask"; m.textContent = L.openMetaMask;
+      m.onclick = () => { location.href = "https://metamask.app.link/dapp/" + appUrl().replace(/^https?:\/\//, ""); };
+      box.appendChild(m);
+      $("dlgHint").textContent = L.dlgNoWallet;
+    } else $("dlgHint").textContent = L.dlgHint;
+    $("walletDlg").showModal();
+  }
+  async function connect(p) {
+    const accounts = await p.request({ method: "eth_requestAccounts" });
+    if (!accounts.length) throw new Error("no account");
+    S.account = E.getAddress(accounts[0]);
+    if (p.on) p.on("accountsChanged", () => location.reload());
+    S.mine = S.gridIds.filter((id) => (S.owners.get(id) || "").toLowerCase() === S.account.toLowerCase());
+    renderAll();
+  }
+  $("connectBtn").onclick = () => { if (!S.account) openWalletDialog(); };
+  $("dlgClose").onclick = () => $("walletDlg").close();
+  $("langBtn").onclick = () => { lang = lang === "fr" ? "en" : "fr"; L = TEXT[lang]; store.set("lang", lang); S.lastShown = -1; renderAll(); };
+
+  renderAll();
+  refresh();
+})();
+</script>
+</body>
+</html>

@@ -14,7 +14,12 @@ window.VAULT_CONFIG = {
     lottery: "0xb49a551aecd96b60a121fc9996c2812e9bf95186", // PartnerLotteryCore (BCM, loterie AVAX)
     // Pool DLMM p33/WAVAX de Pharaoh (bin step 25) : https://www.phar.gg/liquidity/0x7d94f880736c2558e039e573b9a8fe230d60297e
     pool: "0x7d94f880736c2558e039e573b9a8fe230d60297e",
+    bingo: "0xeE23eEcA4C3876bB3729E1d0f508920d3A8B4D4F", // BingoGameEngine (BCM, bingo)
   },
+  // Bingo page: where the collection's pictures are read, and the pace of the draw on the official site.
+  ipfsGateway: "https://ipfs.io/ipfs/",
+  bingoNftCid: "bafybeihupyplt2ydu6fgucbhgpkeertanu3su2f37xovx2ixkfbyqsa479",
+  bingoSecondsPerNumber: 1,
   // Optionnel : identifiant de projet Reown (WalletConnect), nécessaire sur iPhone.
   // Gratuit sur https://cloud.reown.com — laisser vide pour masquer le bouton.
   walletConnectProjectId: "",
